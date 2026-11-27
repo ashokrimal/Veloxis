@@ -2,8 +2,119 @@ import type {
   ActivityVerdict,
   BenchmarkProfile,
   SpeedTestResult,
+  SpeedUnit,
   VerdictTier,
 } from '../types/speedtest';
+
+const MB = 1024 * 1024;
+const GB = 1024 * MB;
+
+export function convertSpeed(mbps: number, unit: SpeedUnit): number {
+  return unit === 'MBps' ? mbps / 8 : mbps;
+}
+
+export function toMbps(value: number, unit: SpeedUnit): number {
+  return unit === 'MBps' ? value * 8 : value;
+}
+
+export function formatSpeedValue(mbps: number, unit: SpeedUnit): string {
+  const val = convertSpeed(mbps, unit);
+  if (unit === 'MBps') {
+    return val < 10 ? val.toFixed(2) : val.toFixed(1);
+  }
+  return val.toFixed(1);
+}
+
+export function formatTransferSize(bytes: number): string {
+  if (bytes >= GB) {
+    const val = bytes / GB;
+    return `${Number.isInteger(val) ? val : val.toFixed(2)} GB`;
+  }
+  const mb = bytes / MB;
+  return `${mb >= 100 ? Math.round(mb) : mb.toFixed(1)} MB`;
+}
+
+export function formatDuration(seconds: number, showTenths = true): string {
+  const safe = Math.max(0, seconds);
+  if (safe < 60) {
+    return showTenths && safe < 100
+      ? `${safe.toFixed(1)}s`
+      : `${Math.round(safe)}s`;
+  }
+  const mins = Math.floor(safe / 60);
+  const rem = Math.round(safe % 60);
+  if (rem === 60) return `${mins + 1}m 0s`;
+  return rem > 0 ? `${mins}m ${rem}s` : `${mins}m`;
+}
+
+export function estimateTestDurationSec(params: {
+  mode: 'precision' | 'file' | 'realtime';
+  downloadBytes?: number;
+  uploadBytes?: number;
+  downloadMbps?: number | null;
+  uploadMbps?: number | null;
+}): number | null {
+  if (params.mode === 'precision') {
+    // 10 quick ping probes (~1.5s) + 6s download + 5s upload
+    return 12.5;
+  }
+  if (params.mode === 'file') {
+    const dlMbps = params.downloadMbps;
+    if (!dlMbps || dlMbps <= 0) return null;
+    const ulMbps =
+      params.uploadMbps && params.uploadMbps > 0 ? params.uploadMbps : dlMbps;
+    const dlBytes = params.downloadBytes ?? 500 * MB;
+    const ulBytes = params.uploadBytes ?? 500 * MB;
+    const dlSec = (dlBytes * 8) / (dlMbps * 1_000_000);
+    const ulSec = (ulBytes * 8) / (ulMbps * 1_000_000);
+    return Math.max(3, 1.5 + dlSec + ulSec);
+  }
+  return null;
+}
+
+export function computeSubscriptionTransferBytes(
+  planValueInUnit: number | null,
+): number {
+  if (planValueInUnit === null || planValueInUnit <= 0) {
+    return 500 * MB;
+  }
+  // Maps subscription speed directly to sustained file transfer payload:
+  // 50 -> 500 MB, 100 -> 1 GB, 200 -> 2 GB (capped safely at 2 GB per direction)
+  if (planValueInUnit >= 100 && Math.abs(planValueInUnit % 100) < 0.01) {
+    const gb = Math.min(2, Math.max(1, Math.round(planValueInUnit / 100)));
+    return gb * GB;
+  }
+  const mb = Math.max(100, Math.min(2048, Math.round(planValueInUnit * 10)));
+  return mb * MB;
+}
+
+export function formatCurrency(amount: number, currencyCode: string): string {
+  const safeCode = /^[A-Z]{3}$/.test(currencyCode) ? currencyCode : 'USD';
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: 'currency',
+      currency: safeCode,
+      maximumFractionDigits: amount >= 100 ? 0 : 2,
+    }).format(amount);
+  } catch {
+    return `${safeCode} ${amount.toFixed(2)}`;
+  }
+}
+
+export function getClosestStandardTierMbps(measuredMbps: number): number | null {
+  if (measuredMbps <= 0) return null;
+  const tiers = [10, 20, 30, 50, 75, 100, 150, 200, 300, 500, 1000];
+  let best = tiers[0];
+  let bestDiff = Math.abs(measuredMbps - best);
+  for (const tier of tiers) {
+    const diff = Math.abs(measuredMbps - tier);
+    if (diff < bestDiff) {
+      best = tier;
+      bestDiff = diff;
+    }
+  }
+  return best;
+}
 
 export function calculateVeloxisScore(params: {
   downloadMbps: number;
@@ -15,19 +126,14 @@ export function calculateVeloxisScore(params: {
 }): number {
   const {downloadMbps, uploadMbps, pingMs, loadedPingMs, jitterMs, packetLossPct} = params;
 
-  // Download (up to 38 pts): logarithmic curve so 100 Mbps ~ 29, 300+ Mbps ~ 36-38
   const dlScore = Math.min(38, Math.log10(Math.max(1, downloadMbps) + 1) * 14.5);
-
-  // Upload (up to 22 pts)
   const ulScore = Math.min(22, Math.log10(Math.max(1, uploadMbps) + 1) * 9.5);
 
-  // Latency & Bufferbloat (up to 24 pts)
   const unloadedPenalty = Math.max(0, (pingMs - 15) * 0.22);
   const bloatDelta = Math.max(0, loadedPingMs - pingMs);
   const bloatPenalty = Math.max(0, (bloatDelta - 10) * 0.14);
   const pingScore = Math.max(0, 24 - unloadedPenalty - bloatPenalty);
 
-  // Jitter & Packet Loss (up to 16 pts)
   const jitterPenalty = Math.max(0, (jitterMs - 3) * 0.45);
   const lossPenalty = packetLossPct * 4.5;
   const stabilityScore = Math.max(0, 16 - jitterPenalty - lossPenalty);
@@ -55,7 +161,6 @@ export function evaluateActivities(params: {
 }): ActivityVerdict[] {
   const {downloadMbps, uploadMbps, pingMs, loadedPingMs, jitterMs, packetLossPct} = params;
 
-  // 1. Streaming
   const max4KStreams = Math.floor(downloadMbps / 25);
   let streamTier: VerdictTier = 'Limited';
   let streamSummary = 'Best suited for standard definition video.';
@@ -70,7 +175,6 @@ export function evaluateActivities(params: {
     streamSummary = 'Reliable for 1080p HD playback on one primary screen.';
   }
 
-  // 2. Gaming
   const bloatDelta = Math.max(0, loadedPingMs - pingMs);
   let gamingTier: VerdictTier = 'Limited';
   let gamingSummary = 'Noticeable latency spikes or packet instability under load.';
@@ -85,7 +189,6 @@ export function evaluateActivities(params: {
     gamingSummary = 'Playable for casual online titles; avoid concurrent large downloads.';
   }
 
-  // 3. Browsing & Video Calls
   let browsingTier: VerdictTier = 'Limited';
   let browsingSummary = 'Slow media-heavy page loads and possible video call freezes.';
   if (downloadMbps >= 20 && uploadMbps >= 10 && pingMs <= 75 && packetLossPct < 1) {
@@ -131,25 +234,36 @@ export function calculatePlanBenchmark(
   profile: BenchmarkProfile,
   measuredDownloadMbps: number,
   measuredUploadMbps: number,
+  detectedDeviceCount: number,
 ) {
-  const safeSubDl = Math.max(1, profile.subscribedDownloadMbps);
-  const safeSubUl = Math.max(1, profile.subscribedUploadMbps);
-  const safeDevices = Math.max(1, profile.connectedDevices);
-
-  const downloadDeliveryPct = Math.round((measuredDownloadMbps / safeSubDl) * 100);
-  const uploadDeliveryPct = Math.round((measuredUploadMbps / safeSubUl) * 100);
-
-  // Reserve ~25 Mbps per active 4K stream and ~5 Mbps per gaming device to show remaining shared headroom
-  const reservedDemandMbps = profile.active4KStreams * 25 + profile.gamingDevices * 5;
+  const safeDevices = Math.max(1, detectedDeviceCount);
   const perDeviceMbps = measuredDownloadMbps / safeDevices;
-  const remainingMbps = Math.max(0, measuredDownloadMbps - reservedDemandMbps);
+
+  const downloadDeliveryPct =
+    profile.subscribedDownloadMbps !== null && profile.subscribedDownloadMbps > 0
+      ? Math.round((measuredDownloadMbps / profile.subscribedDownloadMbps) * 100)
+      : null;
+
+  const uploadDeliveryPct =
+    profile.subscribedUploadMbps !== null && profile.subscribedUploadMbps > 0
+      ? Math.round((measuredUploadMbps / profile.subscribedUploadMbps) * 100)
+      : null;
+
   const costPer100Mbps =
-    measuredDownloadMbps > 0 ? (profile.monthlyPriceUsd / measuredDownloadMbps) * 100 : 0;
+    profile.monthlyPrice !== null && profile.monthlyPrice > 0 && measuredDownloadMbps > 0
+      ? (profile.monthlyPrice / measuredDownloadMbps) * 100
+      : null;
 
   let capacityStatus: 'Optimal' | 'Balanced' | 'Congested' = 'Optimal';
-  if (perDeviceMbps < 10 || remainingMbps < 15) {
+  if (
+    perDeviceMbps < 15 ||
+    (downloadDeliveryPct !== null && downloadDeliveryPct < 50)
+  ) {
     capacityStatus = 'Congested';
-  } else if (perDeviceMbps < 25 || downloadDeliveryPct < 70) {
+  } else if (
+    perDeviceMbps < 35 ||
+    (downloadDeliveryPct !== null && downloadDeliveryPct < 75)
+  ) {
     capacityStatus = 'Balanced';
   }
 
@@ -157,8 +271,6 @@ export function calculatePlanBenchmark(
     downloadDeliveryPct,
     uploadDeliveryPct,
     perDeviceMbps,
-    reservedDemandMbps,
-    remainingMbps,
     costPer100Mbps,
     capacityStatus,
   };
@@ -170,12 +282,16 @@ export function exportHistoryCSV(results: SpeedTestResult[]): void {
     'Mode',
     'Veloxis Score',
     'Download (Mbps)',
+    'Download (MBps)',
     'Upload (Mbps)',
+    'Upload (MBps)',
     'Ping (ms)',
     'Loaded Ping (ms)',
     'Jitter (ms)',
     'Packet Loss (%)',
+    'Duration (s)',
     'ISP',
+    'Country',
     'Server Node',
   ];
   const rows = results.map((r) => [
@@ -183,12 +299,16 @@ export function exportHistoryCSV(results: SpeedTestResult[]): void {
     r.mode,
     r.veloxisScore,
     r.downloadMbps.toFixed(2),
+    (r.downloadMbps / 8).toFixed(2),
     r.uploadMbps.toFixed(2),
+    (r.uploadMbps / 8).toFixed(2),
     r.pingMs.toFixed(1),
     r.loadedPingMs.toFixed(1),
     r.jitterMs.toFixed(1),
     r.packetLossPct.toFixed(1),
-    `"${r.network.isp.replace(/"/g, '""')}"`,
+    r.durationSec !== undefined ? r.durationSec.toFixed(1) : '',
+    `"${(r.network.isp || 'Unknown').replace(/"/g, '""')}"`,
+    `"${(r.network.country || '').replace(/"/g, '""')}"`,
     `"${r.network.serverNode.replace(/"/g, '""')}"`,
   ]);
 

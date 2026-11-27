@@ -7,9 +7,14 @@ export type TestPhase =
   | 'monitoring'
   | 'error';
 
-export type TestMode = 'precision' | 'realtime';
+export type TestMode = 'precision' | 'file' | 'realtime';
 
-export type NavSection = 'speedtest' | 'monitor' | 'benchmark' | 'history';
+export type SpeedUnit = 'Mbps' | 'MBps';
+
+export interface TransferProgress {
+  bytes: number;
+  targetBytes: number;
+}
 
 export interface NetworkInfo {
   ip: string;
@@ -18,8 +23,26 @@ export interface NetworkInfo {
   city: string;
   region: string;
   country: string;
+  countryCode: string;
+  currencyCode: string;
   serverNode: string;
   detected: boolean;
+}
+
+export interface RegionalOperator {
+  id: number;
+  name: string;
+  city: string;
+  state: string;
+  website: string;
+}
+
+export interface RegionalIspsResponse {
+  countryCode: string;
+  operators: RegionalOperator[];
+  available: boolean;
+  source?: string;
+  note?: string;
 }
 
 export interface BrowserConnectionHint {
@@ -41,7 +64,7 @@ export interface ActivityVerdict {
 }
 
 export interface TelemetrySample {
-  t: number; // seconds since test start
+  t: number;
   downloadMbps: number | null;
   uploadMbps: number | null;
   pingMs: number | null;
@@ -61,14 +84,36 @@ export interface SpeedTestResult {
   activities: ActivityVerdict[];
   network: NetworkInfo;
   samples: TelemetrySample[];
+  durationSec?: number;
+  transferredBytes?: {
+    download: number;
+    upload: number;
+  };
 }
 
 export interface BenchmarkProfile {
   planName: string;
-  subscribedDownloadMbps: number;
-  subscribedUploadMbps: number;
-  monthlyPriceUsd: number;
-  connectedDevices: number;
-  active4KStreams: number;
-  gamingDevices: number;
+  subscribedDownloadMbps: number | null;
+  subscribedUploadMbps: number | null;
+  monthlyPrice: number | null;
+  currencyCode: string;
+}
+
+export interface DetectedDevice {
+  deviceId: string;
+  label: string;
+  os: string;
+  browser: string;
+  deviceType: 'Desktop' | 'Mobile' | 'Tablet';
+  isCurrentDevice: boolean;
+  linkType: string;
+  rttMs: number;
+  bytesDown: number;
+  bytesUp: number;
+  totalBytesUsed: number;
+  bandwidthShareMbps: number;
+  estimatedGbPerHour: number | null;
+  usagePct: number;
+  status: 'Active' | 'Testing' | 'Idle';
+  lastSeenAt: number;
 }

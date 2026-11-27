@@ -1,420 +1,741 @@
-import React from 'react';
-import {AlertTriangle, CheckCircle2, Info, Minus, Plus, RefreshCw} from 'lucide-react';
+import React, {useEffect, useState} from 'react';
+import {
+  ExternalLink,
+  Info,
+  Laptop,
+  MapPin,
+  RefreshCw,
+  Search,
+  Smartphone,
+  Tablet,
+} from 'lucide-react';
+import {motion} from 'motion/react';
 import type {
   BenchmarkProfile,
-  BrowserConnectionHint,
+  DetectedDevice,
   NetworkInfo,
+  RegionalIspsResponse,
+  SpeedUnit,
 } from '../types/speedtest';
-import {calculatePlanBenchmark} from '../utils/scoring';
+import {formatDataVolume} from '../utils/deviceDetection';
+import {
+  calculatePlanBenchmark,
+  convertSpeed,
+  formatCurrency,
+  formatSpeedValue,
+  getClosestStandardTierMbps,
+  toMbps,
+} from '../utils/scoring';
 
 interface DevicePlanBenchmarkProps {
   profile: BenchmarkProfile;
   onChangeProfile: (next: BenchmarkProfile) => void;
   measuredDownloadMbps: number;
   measuredUploadMbps: number;
+  speedUnit: SpeedUnit;
   networkInfo: NetworkInfo;
-  browserHint: BrowserConnectionHint;
+  regionalIsps: RegionalIspsResponse;
+  detectedDevices: DetectedDevice[];
   onRefreshNetwork: () => void;
+  onRequestFileTest?: () => void;
 }
 
-const PLAN_PRESETS: Array<{
-  label: string;
-  planName: string;
-  dl: number;
-  ul: number;
-  price: number;
-}> = [
-  {label: '100 Mbps', planName: '100 Mbps Essentials', dl: 100, ul: 20, price: 45},
-  {label: '300 Mbps', planName: '300 Mbps Home Fiber', dl: 300, ul: 100, price: 60},
-  {label: '500 Mbps', planName: '500 Mbps Pro', dl: 500, ul: 250, price: 75},
-  {label: '1 Gbps', planName: '1 Gbps Symmetrical', dl: 1000, ul: 1000, price: 90},
+const STANDARD_TIERS_MBPS = [30, 50, 100, 200, 300, 500, 1000];
+
+const CURRENCY_OPTIONS = [
+  'USD',
+  'NPR',
+  'INR',
+  'EUR',
+  'GBP',
+  'CAD',
+  'AUD',
+  'TWD',
+  'JPY',
+  'SGD',
+  'MYR',
+  'AED',
+  'PKR',
+  'BDT',
+  'PHP',
+  'BRL',
+  'KRW',
 ];
 
-const HOUSEHOLD_PRESETS = [
-  {label: 'Solo (2)', count: 2, streams: 1, gaming: 0},
-  {label: 'Home (5)', count: 5, streams: 1, gaming: 1},
-  {label: 'Shared (10)', count: 10, streams: 2, gaming: 2},
-  {label: 'Office (16)', count: 16, streams: 1, gaming: 0},
-];
+function DeviceIcon({type}: {type: DetectedDevice['deviceType']}) {
+  if (type === 'Mobile') {
+    return (
+      <Smartphone
+        className="h-4 w-4 text-slate-500 dark:text-slate-400 shrink-0"
+        aria-hidden="true"
+      />
+    );
+  }
+  if (type === 'Tablet') {
+    return (
+      <Tablet
+        className="h-4 w-4 text-slate-500 dark:text-slate-400 shrink-0"
+        aria-hidden="true"
+      />
+    );
+  }
+  return (
+    <Laptop
+      className="h-4 w-4 text-slate-500 dark:text-slate-400 shrink-0"
+      aria-hidden="true"
+    />
+  );
+}
 
 export const DevicePlanBenchmark: React.FC<DevicePlanBenchmarkProps> = ({
   profile,
   onChangeProfile,
   measuredDownloadMbps,
   measuredUploadMbps,
+  speedUnit,
   networkInfo,
-  browserHint,
+  regionalIsps,
+  detectedDevices,
   onRefreshNetwork,
+  onRequestFileTest,
 }) => {
+  const effectiveCurrency =
+    profile.currencyCode || networkInfo.currencyCode || 'USD';
+
+  const [dlInput, setDlInput] = useState<string>(() =>
+    profile.subscribedDownloadMbps !== null
+      ? String(
+          Number(
+            convertSpeed(profile.subscribedDownloadMbps, speedUnit).toFixed(2),
+          ),
+        )
+      : '',
+  );
+  const [ulInput, setUlInput] = useState<string>(() =>
+    profile.subscribedUploadMbps !== null
+      ? String(
+          Number(
+            convertSpeed(profile.subscribedUploadMbps, speedUnit).toFixed(2),
+          ),
+        )
+      : '',
+  );
+  const [priceInput, setPriceInput] = useState<string>(() =>
+    profile.monthlyPrice !== null ? String(profile.monthlyPrice) : '',
+  );
+
+  // Sync displayed input numbers whenever unit or external tier selection changes
+  useEffect(() => {
+    setDlInput(
+      profile.subscribedDownloadMbps !== null
+        ? String(
+            Number(
+              convertSpeed(profile.subscribedDownloadMbps, speedUnit).toFixed(2),
+            ),
+          )
+        : '',
+    );
+  }, [profile.subscribedDownloadMbps, speedUnit]);
+
+  useEffect(() => {
+    setUlInput(
+      profile.subscribedUploadMbps !== null
+        ? String(
+            Number(
+              convertSpeed(profile.subscribedUploadMbps, speedUnit).toFixed(2),
+            ),
+          )
+        : '',
+    );
+  }, [profile.subscribedUploadMbps, speedUnit]);
+
+  useEffect(() => {
+    setPriceInput(
+      profile.monthlyPrice !== null ? String(profile.monthlyPrice) : '',
+    );
+  }, [profile.monthlyPrice]);
+
+  const deviceCount = Math.max(1, detectedDevices.length);
   const benchmark = calculatePlanBenchmark(
     profile,
     measuredDownloadMbps,
     measuredUploadMbps,
+    deviceCount,
   );
 
   const hasMeasurement = measuredDownloadMbps > 0;
-  const clampedDelivery = Math.min(100, Math.max(0, benchmark.downloadDeliveryPct));
+  const clampedDelivery =
+    benchmark.downloadDeliveryPct !== null
+      ? Math.min(100, Math.max(0, benchmark.downloadDeliveryPct))
+      : 0;
+  const totalBytesAll = detectedDevices.reduce(
+    (sum, d) => sum + d.totalBytesUsed,
+    0,
+  );
 
-  const statusTone =
-    benchmark.capacityStatus === 'Optimal'
-      ? {color: 'text-emerald-700', Icon: CheckCircle2}
-      : benchmark.capacityStatus === 'Balanced'
-        ? {color: 'text-blue-700', Icon: CheckCircle2}
-        : {color: 'text-amber-700', Icon: AlertTriangle};
+  const closestTierMbps = getClosestStandardTierMbps(measuredDownloadMbps);
+
+  const locationLabel = [networkInfo.city, networkInfo.region, networkInfo.country]
+    .filter(Boolean)
+    .join(', ');
+
+  const rateSearchQuery = [
+    networkInfo.isp && networkInfo.detected ? networkInfo.isp : 'broadband internet',
+    'internet plans pricing',
+    networkInfo.city,
+    networkInfo.country,
+  ]
+    .filter(Boolean)
+    .join(' ');
+  const rateSearchUrl = `https://www.google.com/search?q=${encodeURIComponent(rateSearchQuery)}`;
+
+  const handleSelectTier = (tierMbps: number) => {
+    onChangeProfile({
+      ...profile,
+      planName: `${tierMbps} Mbps Plan`,
+      subscribedDownloadMbps: tierMbps,
+      currencyCode: effectiveCurrency,
+    });
+  };
+
+  const handleDlChange = (raw: string) => {
+    setDlInput(raw);
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      onChangeProfile({...profile, subscribedDownloadMbps: null, planName: ''});
+      return;
+    }
+    const parsed = Number(trimmed);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      onChangeProfile({
+        ...profile,
+        subscribedDownloadMbps: Number(toMbps(parsed, speedUnit).toFixed(2)),
+        planName: `${trimmed} ${speedUnit} Plan`,
+        currencyCode: effectiveCurrency,
+      });
+    }
+  };
+
+  const handleUlChange = (raw: string) => {
+    setUlInput(raw);
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      onChangeProfile({...profile, subscribedUploadMbps: null});
+      return;
+    }
+    const parsed = Number(trimmed);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      onChangeProfile({
+        ...profile,
+        subscribedUploadMbps: Number(toMbps(parsed, speedUnit).toFixed(2)),
+        currencyCode: effectiveCurrency,
+      });
+    }
+  };
+
+  const handlePriceChange = (raw: string) => {
+    setPriceInput(raw);
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      onChangeProfile({...profile, monthlyPrice: null});
+      return;
+    }
+    const parsed = Number(trimmed);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      onChangeProfile({
+        ...profile,
+        monthlyPrice: parsed,
+        currencyCode: effectiveCurrency,
+      });
+    }
+  };
+
+  // Cost normalized to 100 Mbps (or 10 MBps when viewing in MBps)
+  const unitCostDisplay =
+    benchmark.costPer100Mbps !== null
+      ? speedUnit === 'MBps'
+        ? benchmark.costPer100Mbps * 0.8 // 10 MBps = 80 Mbps -> 0.8x of costPer100Mbps
+        : benchmark.costPer100Mbps
+      : null;
 
   return (
     <section
-      aria-label="ISP subscription benchmark and household device estimator"
-      className="rounded-xl border border-slate-200 bg-white p-6"
+      aria-label="Automatic connected devices and ISP plan benchmark"
+      className="space-y-6"
     >
-      {/* Detected ISP & Connection Metadata Header */}
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4">
-        <div>
-          <h2 className="text-base font-semibold text-slate-900">
-            ISP Plan Benchmark &amp; Household Devices
-          </h2>
-          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-            <span className="font-medium text-slate-700">{networkInfo.isp}</span>
-            {networkInfo.asn && (
-              <>
-                <span aria-hidden="true">·</span>
-                <span className="font-mono">{networkInfo.asn}</span>
-              </>
-            )}
-            <span aria-hidden="true">·</span>
-            <span className="font-mono">{networkInfo.ip}</span>
-            {networkInfo.city && (
-              <>
-                <span aria-hidden="true">·</span>
-                <span>
-                  {networkInfo.city}
-                  {networkInfo.country ? `, ${networkInfo.country}` : ''}
+      {/* Card 1: Automatically Detected Devices & Internet Usage Per Device */}
+      <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] p-6 sm:p-8 transition-colors duration-200">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">
+              Connected Devices &amp; Internet Usage
+            </h2>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+              {networkInfo.detected
+                ? `Detected network: ${networkInfo.isp || 'Unknown ISP'}${networkInfo.asn ? ` (${networkInfo.asn})` : ''} · ${networkInfo.ip}`
+                : `ISP & public location unavailable (${networkInfo.ip}) — reconnect or check network`}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-4">
+            <div className="text-right">
+              <div className="text-xs text-slate-500 dark:text-slate-400">
+                Session Total
+              </div>
+              <div className="font-mono text-sm font-semibold text-slate-900 dark:text-slate-100 tabular-nums">
+                {formatDataVolume(totalBytesAll)}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={onRefreshNetwork}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3.5 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+            >
+              <RefreshCw
+                className="h-3.5 w-3.5 text-slate-500 dark:text-slate-400"
+                aria-hidden="true"
+              />
+              <span>Rescan</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-6 overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400">
+                <th className="pb-3 pr-4 font-medium">Device</th>
+                <th className="pb-3 px-4 font-medium">Connection</th>
+                <th className="pb-3 px-4 text-right font-medium">
+                  Bandwidth Share
+                </th>
+                <th className="pb-3 px-4 text-right font-medium">Data Used</th>
+                <th className="pb-3 pl-4 text-right font-medium">
+                  Max Hourly Rate
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
+              {detectedDevices.map((dev) => (
+                <tr key={dev.deviceId} className="h-14">
+                  <td className="py-3 pr-4">
+                    <div className="flex items-center gap-3">
+                      <DeviceIcon type={dev.deviceType} />
+                      <div>
+                        <div className="font-medium text-slate-900 dark:text-slate-100">
+                          {dev.label}
+                          {dev.isCurrentDevice && (
+                            <span className="ml-2 text-xs font-normal text-blue-600 dark:text-blue-400">
+                              This device
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-slate-400 dark:text-slate-500">
+                          {dev.status}
+                        </div>
+                      </div>
+                    </div>
+                  </td>
+
+                  <td className="py-3 px-4 text-xs text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                    <div>{dev.linkType}</div>
+                    {dev.rttMs > 0 && (
+                      <div className="font-mono text-slate-400 dark:text-slate-500 tabular-nums">
+                        {dev.rttMs} ms RTT
+                      </div>
+                    )}
+                  </td>
+
+                  <td className="py-3 px-4 text-right font-mono text-sm font-semibold text-slate-900 dark:text-slate-100 tabular-nums whitespace-nowrap">
+                    {dev.bandwidthShareMbps > 0
+                      ? `${formatSpeedValue(dev.bandwidthShareMbps, speedUnit)} ${speedUnit}`
+                      : '--'}
+                  </td>
+
+                  <td className="py-3 px-4 text-right whitespace-nowrap">
+                    <div className="font-mono text-sm font-semibold text-slate-900 dark:text-slate-100 tabular-nums">
+                      {formatDataVolume(dev.totalBytesUsed)}
+                    </div>
+                    <div className="font-mono text-xs text-slate-400 dark:text-slate-500 tabular-nums">
+                      {dev.usagePct}% of total
+                    </div>
+                  </td>
+
+                  <td className="py-3 pl-4 text-right font-mono text-sm text-slate-700 dark:text-slate-300 tabular-nums whitespace-nowrap">
+                    {dev.estimatedGbPerHour !== null
+                      ? `${dev.estimatedGbPerHour.toFixed(1)} GB/hr`
+                      : '--'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <p className="mt-4 border-t border-slate-100 dark:border-slate-800/80 pt-4 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+          Devices that open Veloxis on your same Wi-Fi / ISP connection appear automatically with measured session data usage. Browser privacy restrictions prevent scanning other local devices that have not opened Veloxis.
+        </p>
+      </div>
+
+      {/* Card 2: Honest ISP Plan & Region-Based Pricing Benchmark */}
+      <div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] transition-colors duration-200">
+        {/* Header & Quick Plan Tier Selector */}
+        <div className="border-b border-slate-200/80 dark:border-slate-800 p-6 sm:p-8">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="max-w-xl">
+              <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">
+                Subscribed ISP Plan &amp; Regional Rate Benchmark
+              </h2>
+              <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                Browsers and IP lookups cannot read your private ISP contract speed (30, 50, 100 Mbps, etc.) or monthly bill automatically. Select a tier or enter your actual plan details manually below.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1 rounded-lg bg-slate-100 dark:bg-slate-800/90 p-1">
+              {STANDARD_TIERS_MBPS.map((tierMbps) => {
+                const active = profile.subscribedDownloadMbps === tierMbps;
+                const label =
+                  speedUnit === 'MBps'
+                    ? `${Number(convertSpeed(tierMbps, 'MBps').toFixed(1))} MBps`
+                    : tierMbps === 1000
+                      ? '1 Gbps'
+                      : `${tierMbps} Mbps`;
+                return (
+                  <button
+                    key={tierMbps}
+                    type="button"
+                    onClick={() => handleSelectTier(tierMbps)}
+                    className={`rounded-md px-2.5 py-1.5 text-xs font-medium whitespace-nowrap transition-colors cursor-pointer ${
+                      active
+                        ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-50 shadow-xs'
+                        : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Honest Location & Observed-Speed Hint Banner */}
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200/80 dark:border-slate-800 bg-slate-50/75 dark:bg-slate-900/60 px-4 py-3 text-xs">
+            <div className="flex items-start gap-2 text-slate-600 dark:text-slate-300">
+              <Info
+                className="h-4 w-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5"
+                aria-hidden="true"
+              />
+              <div>
+                {hasMeasurement && closestTierMbps !== null ? (
+                  <span>
+                    Measured download is{' '}
+                    <span className="font-mono font-semibold text-slate-900 dark:text-slate-100 tabular-nums">
+                      {formatSpeedValue(measuredDownloadMbps, speedUnit)} {speedUnit}
+                    </span>{' '}
+                    (closest standard tier: {closestTierMbps} Mbps /{' '}
+                    {Number((closestTierMbps / 8).toFixed(2))} MBps — this cannot verify your contract).
+                  </span>
+                ) : (
+                  <span>
+                    Run a speed test or enter your subscribed download speed, optional upload speed, and monthly price in your local currency.
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              {hasMeasurement &&
+                closestTierMbps !== null &&
+                profile.subscribedDownloadMbps !== closestTierMbps && (
+                  <button
+                    type="button"
+                    onClick={() => handleSelectTier(closestTierMbps)}
+                    className="rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                  >
+                    Apply {closestTierMbps} Mbps
+                  </button>
+                )}
+              {onRequestFileTest && (
+                <button
+                  type="button"
+                  onClick={onRequestFileTest}
+                  className="rounded-md bg-blue-600 dark:bg-blue-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 dark:hover:bg-blue-400 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  Run Plan File Test
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Manual Plan & Local Currency Inputs */}
+          <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div>
+              <label
+                htmlFor="sub-dl-input"
+                className="block text-xs font-medium text-slate-600 dark:text-slate-300"
+              >
+                Subscribed Download ({speedUnit})
+              </label>
+              <input
+                id="sub-dl-input"
+                type="number"
+                min="0"
+                step="any"
+                placeholder={speedUnit === 'MBps' ? 'e.g. 12.5' : 'e.g. 100'}
+                value={dlInput}
+                onChange={(e) => handleDlChange(e.target.value)}
+                className="mt-1.5 w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 font-mono text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:border-blue-600 dark:focus:border-blue-400 focus:outline-none tabular-nums"
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="sub-ul-input"
+                className="block text-xs font-medium text-slate-600 dark:text-slate-300"
+              >
+                Subscribed Upload ({speedUnit}, optional)
+              </label>
+              <input
+                id="sub-ul-input"
+                type="number"
+                min="0"
+                step="any"
+                placeholder={speedUnit === 'MBps' ? 'e.g. 6.25' : 'e.g. 50'}
+                value={ulInput}
+                onChange={(e) => handleUlChange(e.target.value)}
+                className="mt-1.5 w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 font-mono text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:border-blue-600 dark:focus:border-blue-400 focus:outline-none tabular-nums"
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="monthly-price-input"
+                className="block text-xs font-medium text-slate-600 dark:text-slate-300"
+              >
+                Monthly Price ({effectiveCurrency})
+              </label>
+              <input
+                id="monthly-price-input"
+                type="number"
+                min="0"
+                step="any"
+                placeholder="Enter monthly bill"
+                value={priceInput}
+                onChange={(e) => handlePriceChange(e.target.value)}
+                className="mt-1.5 w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 font-mono text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:border-blue-600 dark:focus:border-blue-400 focus:outline-none tabular-nums"
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="currency-select"
+                className="block text-xs font-medium text-slate-600 dark:text-slate-300"
+              >
+                Region Currency{' '}
+                {networkInfo.currencyCode && !profile.currencyCode
+                  ? '(Auto)'
+                  : ''}
+              </label>
+              <div className="mt-1.5 flex items-center gap-2">
+                <select
+                  id="currency-select"
+                  value={effectiveCurrency}
+                  onChange={(e) =>
+                    onChangeProfile({...profile, currencyCode: e.target.value})
+                  }
+                  className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 font-mono text-sm text-slate-900 dark:text-slate-100 focus:border-blue-600 dark:focus:border-blue-400 focus:outline-none"
+                >
+                  {!CURRENCY_OPTIONS.includes(effectiveCurrency) && (
+                    <option value={effectiveCurrency}>
+                      {effectiveCurrency}
+                    </option>
+                  )}
+                  {CURRENCY_OPTIONS.map((code) => (
+                    <option key={code} value={code}>
+                      {code}
+                    </option>
+                  ))}
+                </select>
+                {(profile.subscribedDownloadMbps !== null ||
+                  profile.subscribedUploadMbps !== null ||
+                  profile.monthlyPrice !== null) && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onChangeProfile({
+                        planName: '',
+                        subscribedDownloadMbps: null,
+                        subscribedUploadMbps: null,
+                        monthlyPrice: null,
+                        currencyCode: networkInfo.currencyCode || '',
+                      })
+                    }
+                    className="rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer whitespace-nowrap shrink-0"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {!networkInfo.detected && (
+            <p className="mt-3 text-xs text-amber-700 dark:text-amber-400">
+              Location and local currency could not be detected automatically. Select your regional currency above and enter your local monthly plan rate manually.
+            </p>
+          )}
+        </div>
+
+        {/* Benchmark Metrics Output Band */}
+        <div className="border-b border-slate-200/80 dark:border-slate-800 bg-slate-50/65 dark:bg-slate-900/60 px-6 py-6 sm:px-8">
+          <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
+            <div>
+              <div className="text-xs text-slate-500 dark:text-slate-400">
+                Plan Delivery
+              </div>
+              <div className="mt-1.5 flex items-baseline gap-2">
+                <span className="font-mono text-3xl font-bold text-slate-900 dark:text-slate-50 tabular-nums">
+                  {hasMeasurement && benchmark.downloadDeliveryPct !== null
+                    ? `${benchmark.downloadDeliveryPct}%`
+                    : '--'}
                 </span>
-              </>
-            )}
-            {browserHint.effectiveType && (
-              <>
-                <span aria-hidden="true">·</span>
-                <span>Browser Link: {browserHint.effectiveType.toUpperCase()}</span>
-              </>
-            )}
-          </div>
-        </div>
-
-        <button
-          type="button"
-          onClick={onRefreshNetwork}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer whitespace-nowrap shrink-0"
-        >
-          <RefreshCw className="h-3.5 w-3.5 text-slate-500" aria-hidden="true" />
-          <span>Refresh ISP</span>
-        </button>
-      </div>
-
-      {/* Two-Column Controls: Subscription Tier vs Connected Devices */}
-      <div className="mt-5 grid grid-cols-1 gap-8 lg:grid-cols-2">
-        {/* Left: ISP Subscription Plan */}
-        <div>
-          <div className="flex items-center justify-between gap-2">
-            <label className="text-xs font-semibold text-slate-700">
-              Your ISP Subscription Tier
-            </label>
-            <span className="text-xs font-mono text-slate-400">
-              {profile.planName}
-            </span>
-          </div>
-
-          <div className="mt-2.5 flex flex-wrap gap-1.5 rounded-lg bg-slate-100 p-1">
-            {PLAN_PRESETS.map((preset) => {
-              const active =
-                profile.subscribedDownloadMbps === preset.dl &&
-                profile.subscribedUploadMbps === preset.ul;
-              return (
-                <button
-                  key={preset.label}
-                  type="button"
-                  onClick={() =>
-                    onChangeProfile({
-                      ...profile,
-                      planName: preset.planName,
-                      subscribedDownloadMbps: preset.dl,
-                      subscribedUploadMbps: preset.ul,
-                      monthlyPriceUsd: preset.price,
-                    })
-                  }
-                  className={`flex-1 rounded-md px-2.5 py-1.5 text-xs font-medium whitespace-nowrap transition-colors cursor-pointer ${
-                    active
-                      ? 'bg-white text-slate-900 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  {preset.label}
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="mt-4 grid grid-cols-3 gap-3">
-            <div>
-              <label
-                htmlFor="sub-dl"
-                className="block text-[11px] font-medium text-slate-500"
-              >
-                Plan Down (Mbps)
-              </label>
-              <input
-                id="sub-dl"
-                type="number"
-                min={1}
-                max={10000}
-                value={profile.subscribedDownloadMbps}
-                onChange={(e) =>
-                  onChangeProfile({
-                    ...profile,
-                    planName: 'Custom Plan',
-                    subscribedDownloadMbps: Math.max(1, Number(e.target.value) || 1),
-                  })
-                }
-                className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2 font-mono text-xs font-semibold text-slate-900 tabular-nums focus:border-blue-600 focus:bg-white focus:outline-none"
-              />
+                <span className="font-mono text-xs text-slate-400 dark:text-slate-500 tabular-nums">
+                  {profile.subscribedDownloadMbps !== null
+                    ? `of ${formatSpeedValue(profile.subscribedDownloadMbps, speedUnit)} ${speedUnit}`
+                    : 'enter subscribed speed'}
+                </span>
+              </div>
+              <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-slate-200/80 dark:bg-slate-800">
+                <motion.div
+                  className="h-full bg-blue-600 dark:bg-blue-500 origin-left"
+                  initial={{scaleX: 0}}
+                  animate={{
+                    scaleX:
+                      hasMeasurement && benchmark.downloadDeliveryPct !== null
+                        ? clampedDelivery / 100
+                        : 0,
+                  }}
+                  transition={{type: 'spring', stiffness: 220, damping: 26}}
+                />
+              </div>
             </div>
 
             <div>
-              <label
-                htmlFor="sub-ul"
-                className="block text-[11px] font-medium text-slate-500"
-              >
-                Plan Up (Mbps)
-              </label>
-              <input
-                id="sub-ul"
-                type="number"
-                min={1}
-                max={10000}
-                value={profile.subscribedUploadMbps}
-                onChange={(e) =>
-                  onChangeProfile({
-                    ...profile,
-                    planName: 'Custom Plan',
-                    subscribedUploadMbps: Math.max(1, Number(e.target.value) || 1),
-                  })
-                }
-                className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2 font-mono text-xs font-semibold text-slate-900 tabular-nums focus:border-blue-600 focus:bg-white focus:outline-none"
-              />
+              <div className="text-xs text-slate-500 dark:text-slate-400">
+                Upload Delivery
+              </div>
+              <div className="mt-1.5 flex items-baseline gap-2">
+                <span className="font-mono text-3xl font-bold text-slate-900 dark:text-slate-50 tabular-nums">
+                  {hasMeasurement && benchmark.uploadDeliveryPct !== null
+                    ? `${benchmark.uploadDeliveryPct}%`
+                    : '--'}
+                </span>
+                <span className="font-mono text-xs text-slate-400 dark:text-slate-500 tabular-nums">
+                  {profile.subscribedUploadMbps !== null
+                    ? `of ${formatSpeedValue(profile.subscribedUploadMbps, speedUnit)} ${speedUnit}`
+                    : 'enter upload speed'}
+                </span>
+              </div>
             </div>
 
             <div>
-              <label
-                htmlFor="sub-price"
-                className="block text-[11px] font-medium text-slate-500"
-              >
-                Monthly ($ USD)
-              </label>
-              <input
-                id="sub-price"
-                type="number"
-                min={0}
-                max={1000}
-                value={profile.monthlyPriceUsd}
-                onChange={(e) =>
-                  onChangeProfile({
-                    ...profile,
-                    monthlyPriceUsd: Math.max(0, Number(e.target.value) || 0),
-                  })
-                }
-                className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2 font-mono text-xs font-semibold text-slate-900 tabular-nums focus:border-blue-600 focus:bg-white focus:outline-none"
-              />
+              <div className="text-xs text-slate-500 dark:text-slate-400">
+                {speedUnit === 'MBps'
+                  ? 'Cost per 10 MBps'
+                  : 'Cost per 100 Mbps'}
+              </div>
+              <div className="mt-1.5 flex items-baseline gap-2">
+                <span className="font-mono text-3xl font-bold text-slate-900 dark:text-slate-50 tabular-nums">
+                  {unitCostDisplay !== null
+                    ? formatCurrency(unitCostDisplay, effectiveCurrency)
+                    : '--'}
+                </span>
+                <span className="font-mono text-xs text-slate-400 dark:text-slate-500">
+                  {profile.monthlyPrice !== null
+                    ? '/ month'
+                    : 'enter monthly price'}
+                </span>
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Right: Connected Household Devices */}
-        <div>
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-xs font-semibold text-slate-700">
-              Active Connected Devices on Network
-            </span>
-            <span className="font-mono text-xs font-semibold text-slate-900 tabular-nums">
-              {profile.connectedDevices}{' '}
-              {profile.connectedDevices === 1 ? 'device' : 'devices'}
-            </span>
-          </div>
-
-          <div className="mt-2.5 flex flex-wrap gap-1.5 rounded-lg bg-slate-100 p-1">
-            {HOUSEHOLD_PRESETS.map((preset) => {
-              const active = profile.connectedDevices === preset.count;
-              return (
-                <button
-                  key={preset.label}
-                  type="button"
-                  onClick={() =>
-                    onChangeProfile({
-                      ...profile,
-                      connectedDevices: preset.count,
-                      active4KStreams: preset.streams,
-                      gamingDevices: preset.gaming,
-                    })
-                  }
-                  className={`flex-1 rounded-md px-2.5 py-1.5 text-xs font-medium whitespace-nowrap transition-colors cursor-pointer ${
-                    active
-                      ? 'bg-white text-slate-900 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  {preset.label}
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="mt-4 flex flex-wrap items-center gap-4">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                aria-label="Decrease connected devices"
-                onClick={() =>
-                  onChangeProfile({
-                    ...profile,
-                    connectedDevices: Math.max(1, profile.connectedDevices - 1),
-                  })
-                }
-                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 cursor-pointer"
-              >
-                <Minus className="h-3.5 w-3.5" />
-              </button>
-              <span className="w-10 text-center font-mono text-sm font-bold text-slate-900 tabular-nums">
-                {profile.connectedDevices}
+        {/* Nearby / Regional ISPs & Internet Rate Lookup Band */}
+        <div className="bg-slate-100/70 dark:bg-slate-800/40 px-6 py-5 sm:px-8">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-200">
+              <MapPin
+                className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400 shrink-0"
+                aria-hidden="true"
+              />
+              <span>
+                {locationLabel
+                  ? `Regional Network Operators near ${locationLabel}`
+                  : 'Regional Network Operators & Local ISP Rates'}
               </span>
-              <button
-                type="button"
-                aria-label="Increase connected devices"
-                onClick={() =>
-                  onChangeProfile({
-                    ...profile,
-                    connectedDevices: Math.min(100, profile.connectedDevices + 1),
-                  })
-                }
-                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 cursor-pointer"
-              >
-                <Plus className="h-3.5 w-3.5" />
-              </button>
             </div>
 
-            <div className="flex items-center gap-3 text-xs text-slate-600">
-              <label className="flex items-center gap-1.5">
-                <span>4K TVs:</span>
-                <input
-                  type="number"
-                  min={0}
-                  max={20}
-                  value={profile.active4KStreams}
-                  onChange={(e) =>
-                    onChangeProfile({
-                      ...profile,
-                      active4KStreams: Math.max(0, Number(e.target.value) || 0),
-                    })
-                  }
-                  className="w-12 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 font-mono text-xs text-slate-900 tabular-nums"
-                />
-              </label>
-
-              <label className="flex items-center gap-1.5">
-                <span>Gaming:</span>
-                <input
-                  type="number"
-                  min={0}
-                  max={20}
-                  value={profile.gamingDevices}
-                  onChange={(e) =>
-                    onChangeProfile({
-                      ...profile,
-                      gamingDevices: Math.max(0, Number(e.target.value) || 0),
-                    })
-                  }
-                  className="w-12 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 font-mono text-xs text-slate-900 tabular-nums"
-                />
-              </label>
-            </div>
+            <a
+              href={rateSearchUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors whitespace-nowrap shrink-0"
+            >
+              <Search className="h-3 w-3 text-slate-500 dark:text-slate-400" aria-hidden="true" />
+              <span>Check local ISP rates online</span>
+              <ExternalLink className="h-3 w-3 text-slate-400" aria-hidden="true" />
+            </a>
           </div>
 
-          <p className="mt-3 flex items-start gap-1.5 text-[11px] leading-relaxed text-slate-500">
-            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
-            <span>
-              Modern browsers block local Wi-Fi ARP scanning for privacy; enter your active household device count to calculate per-device headroom accurately.
-            </span>
+          {regionalIsps.available && regionalIsps.operators.length > 0 ? (
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              {regionalIsps.operators.map((op, idx) => (
+                <motion.div
+                  key={`${op.id}-${op.name}`}
+                  initial={{opacity: 0, y: 6}}
+                  whileInView={{opacity: 1, y: 0}}
+                  viewport={{once: true, amount: 0.2}}
+                  transition={{
+                    duration: 0.24,
+                    delay: Math.min(idx * 0.04, 0.24),
+                    ease: [0.16, 1, 0.3, 1],
+                  }}
+                  whileHover={{y: -1}}
+                  className="flex items-center justify-between gap-2 rounded-lg border border-slate-200/80 dark:border-slate-800 bg-white/90 dark:bg-[#111827] px-3 py-2 text-xs"
+                >
+                  <div className="min-w-0">
+                    <div className="truncate font-medium text-slate-800 dark:text-slate-100">
+                      {op.name}
+                    </div>
+                    <div className="truncate text-[11px] text-slate-400 dark:text-slate-500">
+                      {[op.city, op.state].filter(Boolean).join(', ') ||
+                        regionalIsps.countryCode}
+                    </div>
+                  </div>
+                  {op.website && (
+                    <a
+                      href={op.website}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label={`Visit ${op.name} website`}
+                      className="text-blue-600 dark:text-blue-400 hover:underline shrink-0"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                    </a>
+                  )}
+                </motion.div>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+              {regionalIsps.note ||
+                'No regional operator directory entries loaded for this IP. Use the search link above to look up current local ISP tariffs and enter your monthly price manually.'}
+            </p>
+          )}
+
+          <p className="mt-3 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+            Live local ISP subscription tariffs are not exposed via public APIs. Click a regional operator or search local rates online to verify pricing in your area, then enter your monthly bill above.
           </p>
-        </div>
-      </div>
-
-      {/* Computed Delivery & Headroom Strip */}
-      <div className="mt-6 grid grid-cols-1 gap-4 border-t border-slate-100 pt-5 sm:grid-cols-2 lg:grid-cols-4">
-        <div>
-          <div className="text-xs text-slate-500">Plan Delivery (Download)</div>
-          <div className="mt-1 flex items-baseline gap-2">
-            <span className="font-mono text-2xl font-bold text-slate-900 tabular-nums">
-              {hasMeasurement ? `${benchmark.downloadDeliveryPct}%` : '--'}
-            </span>
-            <span className="font-mono text-xs text-slate-400 tabular-nums">
-              of {profile.subscribedDownloadMbps} Mbps
-            </span>
-          </div>
-          <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-            <div
-              className="h-full bg-blue-600 transition-transform duration-200 origin-left"
-              style={{
-                transform: `scaleX(${hasMeasurement ? clampedDelivery / 100 : 0})`,
-              }}
-            />
-          </div>
-        </div>
-
-        <div>
-          <div className="text-xs text-slate-500">Upload Delivery</div>
-          <div className="mt-1 flex items-baseline gap-2">
-            <span className="font-mono text-2xl font-bold text-slate-900 tabular-nums">
-              {hasMeasurement ? `${benchmark.uploadDeliveryPct}%` : '--'}
-            </span>
-            <span className="font-mono text-xs text-slate-400 tabular-nums">
-              of {profile.subscribedUploadMbps} Mbps
-            </span>
-          </div>
-          <div className="mt-2 text-xs text-slate-500 tabular-nums">
-            Measured: {hasMeasurement ? `${measuredUploadMbps.toFixed(1)} Mbps` : 'Run test'}
-          </div>
-        </div>
-
-        <div>
-          <div className="text-xs text-slate-500">Per-Device Share</div>
-          <div className="mt-1 flex items-baseline gap-1.5">
-            <span className="font-mono text-2xl font-bold text-slate-900 tabular-nums">
-              {hasMeasurement ? benchmark.perDeviceMbps.toFixed(1) : '--'}
-            </span>
-            <span className="font-mono text-xs text-slate-400">Mbps / device</span>
-          </div>
-          <div className="mt-2 flex items-center gap-1 text-xs font-medium">
-            {hasMeasurement ? (
-              <span className={`inline-flex items-center gap-1 ${statusTone.color}`}>
-                <statusTone.Icon className="h-3.5 w-3.5" aria-hidden="true" />
-                <span>{benchmark.capacityStatus} Headroom</span>
-              </span>
-            ) : (
-              <span className="text-slate-400">Run speed test to evaluate</span>
-            )}
-          </div>
-        </div>
-
-        <div>
-          <div className="text-xs text-slate-500">Effective Cost / 100 Mbps</div>
-          <div className="mt-1 flex items-baseline gap-1.5">
-            <span className="font-mono text-2xl font-bold text-slate-900 tabular-nums">
-              {hasMeasurement ? `$${benchmark.costPer100Mbps.toFixed(2)}` : '--'}
-            </span>
-            <span className="font-mono text-xs text-slate-400">/ mo</span>
-          </div>
-          <div className="mt-2 text-xs text-slate-500 tabular-nums">
-            Free headroom after load:{' '}
-            {hasMeasurement ? `${benchmark.remainingMbps.toFixed(0)} Mbps` : '--'}
-          </div>
         </div>
       </div>
     </section>

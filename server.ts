@@ -1,6 +1,7 @@
 import express from 'express';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import JSZip from 'jszip';
@@ -23,6 +24,8 @@ interface NetworkLookupResponse {
   city: string;
   region: string;
   country: string;
+  countryCode: string;
+  currencyCode: string;
   serverNode: string;
   detected: boolean;
 }
@@ -52,12 +55,54 @@ function isPrivateIp(ip: string): boolean {
 
 async function lookupNetworkInfo(clientIp: string): Promise<NetworkLookupResponse> {
   const cleanIp = clientIp.replace(/^::ffff:/, '');
-  const endpoint = isPrivateIp(cleanIp)
+  const ipApiEndpoint = isPrivateIp(cleanIp)
+    ? 'http://ip-api.com/json/?fields=status,country,countryCode,regionName,city,currency,isp,org,as,query'
+    : `http://ip-api.com/json/${encodeURIComponent(cleanIp)}?fields=status,country,countryCode,regionName,city,currency,isp,org,as,query`;
+
+  try {
+    const res = await fetch(ipApiEndpoint, {
+      signal: AbortSignal.timeout(2800),
+      headers: {'User-Agent': 'Veloxis-Telemetry/1.0'},
+    });
+    if (res.ok) {
+      const data = (await res.json()) as {
+        status?: string;
+        query?: string;
+        country?: string;
+        countryCode?: string;
+        regionName?: string;
+        city?: string;
+        currency?: string;
+        isp?: string;
+        org?: string;
+        as?: string;
+      };
+      if (data.status === 'success') {
+        const asnMatch = data.as?.match(/AS\d+/i);
+        return {
+          ip: data.query || cleanIp,
+          isp: data.isp || data.org || 'Unknown ISP',
+          asn: asnMatch ? asnMatch[0].toUpperCase() : '',
+          city: data.city || '',
+          region: data.regionName || '',
+          country: data.country || '',
+          countryCode: data.countryCode || '',
+          currencyCode: data.currency || '',
+          serverNode: 'Veloxis Edge · Cloud Run',
+          detected: true,
+        };
+      }
+    }
+  } catch {
+    // Try secondary geo-IP source below
+  }
+
+  const ipWhoEndpoint = isPrivateIp(cleanIp)
     ? 'https://ipwho.is/'
     : `https://ipwho.is/${encodeURIComponent(cleanIp)}`;
 
   try {
-    const res = await fetch(endpoint, {
+    const res = await fetch(ipWhoEndpoint, {
       signal: AbortSignal.timeout(2500),
       headers: {'User-Agent': 'Veloxis-Telemetry/1.0'},
     });
@@ -68,32 +113,38 @@ async function lookupNetworkInfo(clientIp: string): Promise<NetworkLookupRespons
         city?: string;
         region?: string;
         country?: string;
+        country_code?: string;
+        currency?: {code?: string};
         connection?: {isp?: string; org?: string; asn?: number};
       };
       if (data.success !== false) {
         return {
           ip: data.ip || cleanIp,
-          isp: data.connection?.isp || data.connection?.org || 'Detected Broadband ISP',
-          asn: data.connection?.asn ? `AS${data.connection.asn}` : 'AS-AUTO',
-          city: data.city || 'Edge Metro',
+          isp: data.connection?.isp || data.connection?.org || 'Unknown ISP',
+          asn: data.connection?.asn ? `AS${data.connection.asn}` : '',
+          city: data.city || '',
           region: data.region || '',
           country: data.country || '',
+          countryCode: data.country_code || '',
+          currencyCode: data.currency?.code || '',
           serverNode: 'Veloxis Edge · Cloud Run',
           detected: true,
         };
       }
     }
   } catch {
-    // Graceful fallback when sandboxed or offline
+    // No external geo-IP reachable
   }
 
   return {
     ip: cleanIp,
-    isp: isPrivateIp(cleanIp) ? 'Local / Direct Network' : 'Broadband Network',
-    asn: 'AS-LOCAL',
-    city: 'Local Gateway',
+    isp: '',
+    asn: '',
+    city: '',
     region: '',
     country: '',
+    countryCode: '',
+    currencyCode: '',
     serverNode: 'Veloxis Edge · Local Node',
     detected: false,
   };
@@ -434,6 +485,154 @@ async function startServer() {
     res.json(info);
   });
 
+  app.get('/api/regional-isps', async (req, res) => {
+    const rawCode = typeof req.query.countryCode === 'string' ? req.query.countryCode.trim().toUpperCase() : '';
+    const cityHint = typeof req.query.city === 'string' ? req.query.city.trim().toLowerCase() : '';
+
+    if (!/^[A-Z]{2}$/.test(rawCode)) {
+      res.json({
+        countryCode: '',
+        operators: [],
+        available: false,
+        note: 'Country could not be determined automatically.',
+      });
+      return;
+    }
+
+    try {
+      const pdbRes = await fetch(
+        `https://www.peeringdb.com/api/org?country=${encodeURIComponent(rawCode)}&limit=18`,
+        {
+          signal: AbortSignal.timeout(3500),
+          headers: {'User-Agent': 'Veloxis-Telemetry/1.0'},
+        },
+      );
+
+      if (!pdbRes.ok) {
+        res.json({
+          countryCode: rawCode,
+          operators: [],
+          available: false,
+          note: 'Regional ISP registry did not respond.',
+        });
+        return;
+      }
+
+      const payload = (await pdbRes.json()) as {
+        data?: Array<{
+          id?: number;
+          name?: string;
+          city?: string;
+          state?: string;
+          website?: string;
+        }>;
+      };
+
+      const rawOps = (payload.data || [])
+        .filter((o) => o.name && o.name.trim().length > 0)
+        .map((o) => ({
+          id: o.id ?? 0,
+          name: (o.name || '').trim(),
+          city: (o.city || '').trim(),
+          state: (o.state || '').trim(),
+          website: (o.website || '').trim(),
+        }));
+
+      rawOps.sort((a, b) => {
+        const aCity = cityHint && a.city.toLowerCase() === cityHint ? 1 : 0;
+        const bCity = cityHint && b.city.toLowerCase() === cityHint ? 1 : 0;
+        if (aCity !== bCity) return bCity - aCity;
+        const aWeb = a.website ? 1 : 0;
+        const bWeb = b.website ? 1 : 0;
+        return bWeb - aWeb;
+      });
+
+      res.json({
+        countryCode: rawCode,
+        operators: rawOps.slice(0, 8),
+        available: rawOps.length > 0,
+        source: 'PeeringDB',
+      });
+    } catch {
+      res.json({
+        countryCode: rawCode,
+        operators: [],
+        available: false,
+        note: 'Unable to query regional ISP directory.',
+      });
+    }
+  });
+
+  interface ServerDeviceSession {
+    deviceId: string;
+    ip: string;
+    label: string;
+    os: string;
+    browser: string;
+    deviceType: string;
+    linkType: string;
+    rttMs: number;
+    bytesDown: number;
+    bytesUp: number;
+    downloadMbps: number;
+    uploadMbps: number;
+    lastSeenAt: number;
+  }
+
+  const deviceRegistry = new Map<string, ServerDeviceSession>();
+  const DEVICE_TTL_MS = 15 * 60 * 1000;
+
+  function pruneStaleDevices(now: number) {
+    for (const [key, entry] of deviceRegistry.entries()) {
+      if (now - entry.lastSeenAt > DEVICE_TTL_MS) {
+        deviceRegistry.delete(key);
+      }
+    }
+  }
+
+  app.post('/api/devices/heartbeat', express.json({limit: '32kb'}), (req, res) => {
+    const now = Date.now();
+    pruneStaleDevices(now);
+    const cleanIp = getClientIp(req).replace(/^::ffff:/, '');
+    const body = (req.body || {}) as Partial<ServerDeviceSession>;
+    const deviceId =
+      typeof body.deviceId === 'string' && body.deviceId.trim().length > 0
+        ? body.deviceId.trim().slice(0, 64)
+        : `dev_${crypto.createHash('sha1').update(`${cleanIp}_${req.headers['user-agent'] || ''}`).digest('hex').slice(0, 10)}`;
+
+    const sessionKey = `${cleanIp}::${deviceId}`;
+    const existing = deviceRegistry.get(sessionKey);
+
+    const record: ServerDeviceSession = {
+      deviceId,
+      ip: cleanIp,
+      label: typeof body.label === 'string' ? body.label.slice(0, 80) : 'Connected Device',
+      os: typeof body.os === 'string' ? body.os.slice(0, 40) : 'Unknown OS',
+      browser: typeof body.browser === 'string' ? body.browser.slice(0, 40) : 'Browser',
+      deviceType: typeof body.deviceType === 'string' ? body.deviceType.slice(0, 24) : 'Desktop',
+      linkType: typeof body.linkType === 'string' ? body.linkType.slice(0, 32) : 'Broadband',
+      rttMs: Number.isFinite(Number(body.rttMs)) ? Math.max(0, Number(body.rttMs)) : 0,
+      bytesDown: Math.max(existing?.bytesDown ?? 0, Number(body.bytesDown) || 0),
+      bytesUp: Math.max(existing?.bytesUp ?? 0, Number(body.bytesUp) || 0),
+      downloadMbps: Number.isFinite(Number(body.downloadMbps)) ? Math.max(0, Number(body.downloadMbps)) : existing?.downloadMbps ?? 0,
+      uploadMbps: Number.isFinite(Number(body.uploadMbps)) ? Math.max(0, Number(body.uploadMbps)) : existing?.uploadMbps ?? 0,
+      lastSeenAt: now,
+    };
+
+    deviceRegistry.set(sessionKey, record);
+
+    const peers = Array.from(deviceRegistry.values()).filter((d) => d.ip === cleanIp);
+    res.json({devices: peers});
+  });
+
+  app.get('/api/devices', (req, res) => {
+    const now = Date.now();
+    pruneStaleDevices(now);
+    const cleanIp = getClientIp(req).replace(/^::ffff:/, '');
+    const peers = Array.from(deviceRegistry.values()).filter((d) => d.ip === cleanIp);
+    res.json({devices: peers});
+  });
+
   app.get('/api/extension/download', async (req, res) => {
     try {
       const proto = req.headers['x-forwarded-proto'] || req.protocol || 'https';
@@ -458,10 +657,15 @@ async function startServer() {
     }
   });
 
+  const httpServer = http.createServer(app);
+
   if (!IS_PROD) {
     const {createServer: createViteServer} = await import('vite');
     const vite = await createViteServer({
-      server: {middlewareMode: true},
+      server: {
+        middlewareMode: true,
+        hmr: process.env.DISABLE_HMR === 'true' ? false : {server: httpServer},
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -473,7 +677,7 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`Veloxis telemetry server running at http://0.0.0.0:${PORT}`);
   });
 }
