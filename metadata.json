@@ -1,0 +1,6 @@
+{
+  "name": "Veloxis",
+  "description": "Precision internet speed test, real-time network telemetry, ISP plan benchmark, installable PWA, and Chrome extension.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

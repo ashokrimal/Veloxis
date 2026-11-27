@@ -1,0 +1,692 @@
+import {useCallback, useEffect, useRef, useState} from 'react';
+import type {
+  BrowserConnectionHint,
+  NetworkInfo,
+  SpeedTestResult,
+  TelemetrySample,
+  TestPhase,
+} from '../types/speedtest';
+import {calculateVeloxisScore, evaluateActivities} from '../utils/scoring';
+
+const HISTORY_STORAGE_KEY = 'veloxis_speed_history_v1';
+
+const DEFAULT_NETWORK: NetworkInfo = {
+  ip: 'Detecting...',
+  isp: 'Detecting ISP...',
+  asn: '',
+  city: '',
+  region: '',
+  country: '',
+  serverNode: 'Veloxis Edge',
+  detected: false,
+};
+
+function loadSavedHistory(): SpeedTestResult[] {
+  try {
+    const raw = localStorage.getItem(HISTORY_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(items: SpeedTestResult[]) {
+  try {
+    localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(items.slice(0, 50)));
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+function createUploadPayload(sizeBytes: number): Uint8Array {
+  const payload = new Uint8Array(sizeBytes);
+  // crypto.getRandomValues supports max 65536 bytes per call
+  const step = 65536;
+  const seed = new Uint8Array(step);
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    crypto.getRandomValues(seed);
+  }
+  for (let offset = 0; offset < sizeBytes; offset += step) {
+    const sliceLen = Math.min(step, sizeBytes - offset);
+    payload.set(sliceLen === step ? seed : seed.subarray(0, sliceLen), offset);
+  }
+  return payload;
+}
+
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[mid - 1] + sorted[mid]) / 2
+    : sorted[mid];
+}
+
+function computeJitter(values: number[]): number {
+  if (values.length < 2) return 0;
+  let totalDelta = 0;
+  for (let i = 1; i < values.length; i++) {
+    totalDelta += Math.abs(values[i] - values[i - 1]);
+  }
+  return totalDelta / (values.length - 1);
+}
+
+export function useSpeedTest() {
+  const [phase, setPhase] = useState<TestPhase>('idle');
+  const [progressPct, setProgressPct] = useState(0);
+  const [liveSpeedMbps, setLiveSpeedMbps] = useState(0);
+  const [livePingMs, setLivePingMs] = useState<number | null>(null);
+  const [liveJitterMs, setLiveJitterMs] = useState<number | null>(null);
+  const [liveDownloadMbps, setLiveDownloadMbps] = useState<number | null>(null);
+  const [liveUploadMbps, setLiveUploadMbps] = useState<number | null>(null);
+  const [liveLoadedPingMs, setLiveLoadedPingMs] = useState<number | null>(null);
+  const [livePacketLossPct, setLivePacketLossPct] = useState<number>(0);
+
+  const [samples, setSamples] = useState<TelemetrySample[]>([]);
+  const [latestResult, setLatestResult] = useState<SpeedTestResult | null>(() => {
+    const saved = loadSavedHistory();
+    return saved[0] ?? null;
+  });
+  const [history, setHistory] = useState<SpeedTestResult[]>(loadSavedHistory);
+  const [networkInfo, setNetworkInfo] = useState<NetworkInfo>(DEFAULT_NETWORK);
+  const [browserHint, setBrowserHint] = useState<BrowserConnectionHint>({});
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const [isMonitoring, setIsMonitoring] = useState(false);
+  const [monitorSamples, setMonitorSamples] = useState<TelemetrySample[]>([]);
+
+  const abortRef = useRef<AbortController | null>(null);
+  const xhrSetRef = useRef<Set<XMLHttpRequest>>(new Set());
+  const monitorTimerRef = useRef<number | null>(null);
+
+  const refreshNetworkInfo = useCallback(async () => {
+    try {
+      const res = await fetch('/api/network-info', {cache: 'no-store'});
+      if (res.ok) {
+        const data = (await res.json()) as NetworkInfo;
+        setNetworkInfo(data);
+      }
+    } catch {
+      // Keep existing info on transient network error
+    }
+
+    const nav = navigator as unknown as {
+      connection?: {
+        effectiveType?: string;
+        downlink?: number;
+        rtt?: number;
+        saveData?: boolean;
+      };
+    };
+    if (nav.connection) {
+      setBrowserHint({
+        effectiveType: nav.connection.effectiveType,
+        downlink: nav.connection.downlink,
+        rtt: nav.connection.rtt,
+        saveData: nav.connection.saveData,
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshNetworkInfo();
+  }, [refreshNetworkInfo]);
+
+  const stopAll = useCallback(() => {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    xhrSetRef.current.forEach((xhr) => {
+      try {
+        xhr.abort();
+      } catch {
+        // Ignore
+      }
+    });
+    xhrSetRef.current.clear();
+
+    if (monitorTimerRef.current !== null) {
+      window.clearTimeout(monitorTimerRef.current);
+      monitorTimerRef.current = null;
+    }
+    setIsMonitoring(false);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      stopAll();
+    };
+  }, [stopAll]);
+
+  const cancelTest = useCallback(() => {
+    stopAll();
+    setPhase('idle');
+    setProgressPct(0);
+    setLiveSpeedMbps(0);
+  }, [stopAll]);
+
+  const startPrecisionTest = useCallback(async () => {
+    stopAll();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const {signal} = controller;
+
+    setErrorMessage(null);
+    setPhase('ping');
+    setProgressPct(4);
+    setLiveSpeedMbps(0);
+    setLivePingMs(null);
+    setLiveJitterMs(null);
+    setLiveDownloadMbps(null);
+    setLiveUploadMbps(null);
+    setLiveLoadedPingMs(null);
+    setLivePacketLossPct(0);
+    setSamples([]);
+
+    const testStart = performance.now();
+    const recordedSamples: TelemetrySample[] = [];
+
+    try {
+      // Phase 1: Latency, Jitter & Packet Loss (10 probes)
+      const pingTotal = 10;
+      const pingValues: number[] = [];
+      let failedPings = 0;
+
+      for (let i = 0; i < pingTotal; i++) {
+        if (signal.aborted) return;
+        const pStart = performance.now();
+        try {
+          const res = await fetch(
+            `/api/speedtest/ping?seq=${i}&t=${Date.now()}`,
+            {cache: 'no-store', signal},
+          );
+          if (!res.ok) throw new Error('Ping failed');
+          await res.json();
+          const rtt = performance.now() - pStart;
+          // Drop first warm-up sample if we have enough samples
+          if (i > 0) {
+            pingValues.push(rtt);
+          }
+          const currentMed = median(pingValues.length > 0 ? pingValues : [rtt]);
+          setLivePingMs(currentMed);
+          setLiveJitterMs(computeJitter(pingValues));
+
+          const pt: TelemetrySample = {
+            t: Number(((performance.now() - testStart) / 1000).toFixed(2)),
+            downloadMbps: null,
+            uploadMbps: null,
+            pingMs: Number(rtt.toFixed(1)),
+          };
+          recordedSamples.push(pt);
+          setSamples([...recordedSamples]);
+        } catch (err) {
+          if (signal.aborted) return;
+          failedPings += 1;
+        }
+        setProgressPct(4 + Math.round(((i + 1) / pingTotal) * 14));
+      }
+
+      const unloadedPing = pingValues.length > 0 ? median(pingValues) : 25;
+      const jitter = computeJitter(pingValues);
+      const packetLossPct = Number(((failedPings / pingTotal) * 100).toFixed(1));
+      setLivePingMs(unloadedPing);
+      setLiveJitterMs(jitter);
+      setLivePacketLossPct(packetLossPct);
+
+      // Phase 2: Multi-stream Download (6.0s window, 4 parallel streams) + Loaded Ping
+      setPhase('download');
+      const dlDurationMs = 6000;
+      const dlRampSkipMs = 600;
+      const dlStart = performance.now();
+      let dlTotalBytes = 0;
+      let dlSteadyBytes = 0;
+      let dlSteadyStart = 0;
+      const loadedPings: number[] = [];
+
+      const dlWindowBuckets: Array<{time: number; bytes: number}> = [];
+
+      const runDownloadWorker = async () => {
+        while (!signal.aborted && performance.now() - dlStart < dlDurationMs) {
+          try {
+            const res = await fetch(
+              `/api/speedtest/download?bytes=${12 * 1024 * 1024}&t=${Date.now()}_${Math.random()}`,
+              {cache: 'no-store', signal},
+            );
+            if (!res.body) break;
+            const reader = res.body.getReader();
+            while (!signal.aborted) {
+              const {done, value} = await reader.read();
+              if (done) break;
+              const now = performance.now();
+              const len = value.byteLength;
+              dlTotalBytes += len;
+              dlWindowBuckets.push({time: now, bytes: len});
+
+              if (now - dlStart >= dlRampSkipMs) {
+                if (dlSteadyStart === 0) dlSteadyStart = now;
+                dlSteadyBytes += len;
+              }
+
+              if (now - dlStart >= dlDurationMs) {
+                await reader.cancel().catch(() => {});
+                break;
+              }
+            }
+          } catch {
+            if (signal.aborted) return;
+            break;
+          }
+        }
+      };
+
+      const runLoadedPingProbe = async () => {
+        while (!signal.aborted && performance.now() - dlStart < dlDurationMs) {
+          await new Promise((r) => setTimeout(r, 650));
+          if (signal.aborted || performance.now() - dlStart >= dlDurationMs) break;
+          const p0 = performance.now();
+          try {
+            await fetch(`/api/speedtest/ping?loaded=1&t=${Date.now()}`, {
+              cache: 'no-store',
+              signal,
+            });
+            const rtt = performance.now() - p0;
+            loadedPings.push(rtt);
+            setLiveLoadedPingMs(median(loadedPings));
+          } catch {
+            // Ignore aborted probes
+          }
+        }
+      };
+
+      const dlSampler = window.setInterval(() => {
+        const now = performance.now();
+        const elapsed = now - dlStart;
+        const windowCutoff = now - 1000;
+        let windowBytes = 0;
+        while (dlWindowBuckets.length > 0 && dlWindowBuckets[0].time < windowCutoff) {
+          dlWindowBuckets.shift();
+        }
+        for (const b of dlWindowBuckets) windowBytes += b.bytes;
+
+        const spanSec = Math.max(0.25, Math.min(1.0, elapsed / 1000));
+        const instMbps = (windowBytes * 8) / (spanSec * 1e6);
+        setLiveSpeedMbps(instMbps);
+        setLiveDownloadMbps(instMbps);
+        setProgressPct(18 + Math.min(40, Math.round((elapsed / dlDurationMs) * 40)));
+
+        recordedSamples.push({
+          t: Number(((now - testStart) / 1000).toFixed(2)),
+          downloadMbps: Number(instMbps.toFixed(2)),
+          uploadMbps: null,
+          pingMs:
+            loadedPings.length > 0
+              ? Number(loadedPings[loadedPings.length - 1].toFixed(1))
+              : null,
+        });
+        setSamples([...recordedSamples]);
+      }, 200);
+
+      const dlTimer = window.setTimeout(() => {
+        // Hard stop workers after duration if needed via per-phase abort?
+        // Workers check elapsed time on read chunks, so let's keep main signal intact
+      }, dlDurationMs + 100);
+
+      await Promise.race([
+        Promise.all([
+          runDownloadWorker(),
+          runDownloadWorker(),
+          runDownloadWorker(),
+          runDownloadWorker(),
+          runLoadedPingProbe(),
+        ]),
+        new Promise<void>((resolve) => {
+          const check = window.setInterval(() => {
+            if (signal.aborted || performance.now() - dlStart >= dlDurationMs + 250) {
+              window.clearInterval(check);
+              resolve();
+            }
+          }, 100);
+        }),
+      ]);
+
+      window.clearInterval(dlSampler);
+      window.clearTimeout(dlTimer);
+      if (signal.aborted) return;
+
+      const steadyDlSec = Math.max(
+        0.5,
+        ((dlSteadyStart > 0 ? performance.now() - dlSteadyStart : performance.now() - dlStart)) /
+          1000,
+      );
+      const finalDownloadMbps =
+        dlSteadyBytes > 0
+          ? (dlSteadyBytes * 8) / (steadyDlSec * 1e6)
+          : (dlTotalBytes * 8) / (Math.max(0.5, (performance.now() - dlStart) / 1000) * 1e6);
+      setLiveDownloadMbps(finalDownloadMbps);
+      const loadedPing = loadedPings.length > 0 ? median(loadedPings) : unloadedPing;
+      setLiveLoadedPingMs(loadedPing);
+
+      // Phase 3: Multi-stream Upload (5.0s window, 3 concurrent XHRs)
+      setPhase('upload');
+      setLiveSpeedMbps(0);
+      const ulDurationMs = 5000;
+      const ulRampSkipMs = 600;
+      const ulStart = performance.now();
+      let ulTotalBytes = 0;
+      let ulSteadyBytes = 0;
+      let ulSteadyStart = 0;
+      const ulWindowBuckets: Array<{time: number; bytes: number}> = [];
+      const uploadPayload = createUploadPayload(3 * 1024 * 1024);
+
+      const runUploadWorker = async () => {
+        while (!signal.aborted && performance.now() - ulStart < ulDurationMs) {
+          await new Promise<void>((resolve) => {
+            const xhr = new XMLHttpRequest();
+            xhrSetRef.current.add(xhr);
+            let lastLoaded = 0;
+
+            xhr.open('POST', `/api/speedtest/upload?t=${Date.now()}_${Math.random()}`, true);
+            xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+
+            xhr.upload.onprogress = (ev) => {
+              const now = performance.now();
+              const delta = Math.max(0, ev.loaded - lastLoaded);
+              lastLoaded = ev.loaded;
+              ulTotalBytes += delta;
+              ulWindowBuckets.push({time: now, bytes: delta});
+
+              if (now - ulStart >= ulRampSkipMs) {
+                if (ulSteadyStart === 0) ulSteadyStart = now;
+                ulSteadyBytes += delta;
+              }
+              if (now - ulStart >= ulDurationMs) {
+                xhr.abort();
+              }
+            };
+
+            xhr.onloadend = () => {
+              xhrSetRef.current.delete(xhr);
+              resolve();
+            };
+
+            xhr.onerror = () => {
+              xhrSetRef.current.delete(xhr);
+              resolve();
+            };
+
+            xhr.send(uploadPayload as unknown as XMLHttpRequestBodyInit);
+          });
+        }
+      };
+
+      const ulSampler = window.setInterval(() => {
+        const now = performance.now();
+        const elapsed = now - ulStart;
+        const windowCutoff = now - 1000;
+        let windowBytes = 0;
+        while (ulWindowBuckets.length > 0 && ulWindowBuckets[0].time < windowCutoff) {
+          ulWindowBuckets.shift();
+        }
+        for (const b of ulWindowBuckets) windowBytes += b.bytes;
+
+        const spanSec = Math.max(0.25, Math.min(1.0, elapsed / 1000));
+        const instMbps = (windowBytes * 8) / (spanSec * 1e6);
+        setLiveSpeedMbps(instMbps);
+        setLiveUploadMbps(instMbps);
+        setProgressPct(58 + Math.min(40, Math.round((elapsed / ulDurationMs) * 40)));
+
+        recordedSamples.push({
+          t: Number(((now - testStart) / 1000).toFixed(2)),
+          downloadMbps: null,
+          uploadMbps: Number(instMbps.toFixed(2)),
+          pingMs: null,
+        });
+        setSamples([...recordedSamples]);
+      }, 200);
+
+      await Promise.all([runUploadWorker(), runUploadWorker(), runUploadWorker()]);
+      window.clearInterval(ulSampler);
+      if (signal.aborted) return;
+
+      const steadyUlSec = Math.max(
+        0.5,
+        ((ulSteadyStart > 0 ? performance.now() - ulSteadyStart : performance.now() - ulStart)) /
+          1000,
+      );
+      const finalUploadMbps =
+        ulSteadyBytes > 0
+          ? (ulSteadyBytes * 8) / (steadyUlSec * 1e6)
+          : (ulTotalBytes * 8) / (Math.max(0.5, (performance.now() - ulStart) / 1000) * 1e6);
+
+      setLiveUploadMbps(finalUploadMbps);
+      setLiveSpeedMbps(finalDownloadMbps);
+      setProgressPct(100);
+
+      const score = calculateVeloxisScore({
+        downloadMbps: finalDownloadMbps,
+        uploadMbps: finalUploadMbps,
+        pingMs: unloadedPing,
+        loadedPingMs: loadedPing,
+        jitterMs: jitter,
+        packetLossPct,
+      });
+
+      const activities = evaluateActivities({
+        downloadMbps: finalDownloadMbps,
+        uploadMbps: finalUploadMbps,
+        pingMs: unloadedPing,
+        loadedPingMs: loadedPing,
+        jitterMs: jitter,
+        packetLossPct,
+      });
+
+      const result: SpeedTestResult = {
+        id: `vx_${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        mode: 'precision',
+        downloadMbps: Number(finalDownloadMbps.toFixed(2)),
+        uploadMbps: Number(finalUploadMbps.toFixed(2)),
+        pingMs: Number(unloadedPing.toFixed(1)),
+        loadedPingMs: Number(loadedPing.toFixed(1)),
+        jitterMs: Number(jitter.toFixed(1)),
+        packetLossPct,
+        veloxisScore: score,
+        activities,
+        network: networkInfo,
+        samples: recordedSamples,
+      };
+
+      setLatestResult(result);
+      setHistory((prev) => {
+        const next = [result, ...prev].slice(0, 50);
+        saveHistory(next);
+        return next;
+      });
+      setPhase('complete');
+    } catch {
+      if (!signal.aborted) {
+        setErrorMessage(
+          'Unable to complete speed measurement. Check your connection and try again.',
+        );
+        setPhase('error');
+      }
+    }
+  }, [networkInfo, stopAll]);
+
+  const startRealtimeMonitor = useCallback(() => {
+    stopAll();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const {signal} = controller;
+
+    setErrorMessage(null);
+    setIsMonitoring(true);
+    setPhase('monitoring');
+    setMonitorSamples([]);
+
+    const monitorStart = performance.now();
+    const pingHistory: number[] = [];
+    let lastDlMbps = latestResult?.downloadMbps ?? 0;
+    let tickCount = 0;
+
+    const tick = async () => {
+      if (signal.aborted) return;
+      tickCount += 1;
+
+      const p0 = performance.now();
+      let pingVal: number | null = null;
+      try {
+        await fetch(`/api/speedtest/ping?rt=${tickCount}&t=${Date.now()}`, {
+          cache: 'no-store',
+          signal,
+        });
+        pingVal = performance.now() - p0;
+        pingHistory.push(pingVal);
+        if (pingHistory.length > 30) pingHistory.shift();
+        setLivePingMs(median(pingHistory));
+        setLiveJitterMs(computeJitter(pingHistory));
+      } catch {
+        if (signal.aborted) return;
+      }
+
+      // Every 3rd tick (~3.5s) perform an adaptive burst to track real-time throughput stability
+      let dlSample: number | null = null;
+      if (tickCount === 1 || tickCount % 3 === 0) {
+        const burstBytes = lastDlMbps > 50 ? 2 * 1024 * 1024 : 768 * 1024;
+        const d0 = performance.now();
+        try {
+          const res = await fetch(
+            `/api/speedtest/download?bytes=${burstBytes}&rt=${tickCount}&t=${Date.now()}`,
+            {cache: 'no-store', signal},
+          );
+          const buf = await res.arrayBuffer();
+          const sec = Math.max(0.03, (performance.now() - d0) / 1000);
+          dlSample = (buf.byteLength * 8) / (sec * 1e6);
+          lastDlMbps = dlSample;
+          setLiveDownloadMbps(dlSample);
+          setLiveSpeedMbps(dlSample);
+        } catch {
+          if (signal.aborted) return;
+        }
+      }
+
+      const point: TelemetrySample = {
+        t: Number(((performance.now() - monitorStart) / 1000).toFixed(1)),
+        downloadMbps: dlSample !== null ? Number(dlSample.toFixed(2)) : null,
+        uploadMbps: null,
+        pingMs: pingVal !== null ? Number(pingVal.toFixed(1)) : null,
+      };
+
+      setMonitorSamples((prev) => [...prev.slice(-44), point]);
+
+      if (!signal.aborted) {
+        monitorTimerRef.current = window.setTimeout(tick, 1100);
+      }
+    };
+
+    tick();
+  }, [latestResult?.downloadMbps, stopAll]);
+
+  const stopRealtimeMonitor = useCallback(() => {
+    stopAll();
+    setPhase(latestResult ? 'complete' : 'idle');
+  }, [latestResult, stopAll]);
+
+  const saveMonitorSnapshot = useCallback(() => {
+    const dlPoints = monitorSamples
+      .map((s) => s.downloadMbps)
+      .filter((v): v is number => v !== null);
+    const pingPoints = monitorSamples
+      .map((s) => s.pingMs)
+      .filter((v): v is number => v !== null);
+
+    if (dlPoints.length === 0 && pingPoints.length === 0) return null;
+
+    const avgDl =
+      dlPoints.length > 0
+        ? dlPoints.reduce((a, b) => a + b, 0) / dlPoints.length
+        : latestResult?.downloadMbps ?? 0;
+    const estUl = latestResult?.uploadMbps ?? avgDl * 0.35;
+    const medPing = pingPoints.length > 0 ? median(pingPoints) : 20;
+    const jit = computeJitter(pingPoints);
+
+    const score = calculateVeloxisScore({
+      downloadMbps: avgDl,
+      uploadMbps: estUl,
+      pingMs: medPing,
+      loadedPingMs: medPing + jit,
+      jitterMs: jit,
+      packetLossPct: 0,
+    });
+
+    const snapshot: SpeedTestResult = {
+      id: `vx_rt_${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      mode: 'realtime',
+      downloadMbps: Number(avgDl.toFixed(2)),
+      uploadMbps: Number(estUl.toFixed(2)),
+      pingMs: Number(medPing.toFixed(1)),
+      loadedPingMs: Number((medPing + jit).toFixed(1)),
+      jitterMs: Number(jit.toFixed(1)),
+      packetLossPct: 0,
+      veloxisScore: score,
+      activities: evaluateActivities({
+        downloadMbps: avgDl,
+        uploadMbps: estUl,
+        pingMs: medPing,
+        loadedPingMs: medPing + jit,
+        jitterMs: jit,
+        packetLossPct: 0,
+      }),
+      network: networkInfo,
+      samples: monitorSamples,
+    };
+
+    setLatestResult(snapshot);
+    setHistory((prev) => {
+      const next = [snapshot, ...prev].slice(0, 50);
+      saveHistory(next);
+      return next;
+    });
+    return snapshot;
+  }, [latestResult?.downloadMbps, latestResult?.uploadMbps, monitorSamples, networkInfo]);
+
+  const clearHistory = useCallback(() => {
+    setHistory([]);
+    try {
+      localStorage.removeItem(HISTORY_STORAGE_KEY);
+    } catch {
+      // Ignore
+    }
+  }, []);
+
+  return {
+    phase,
+    progressPct,
+    liveSpeedMbps,
+    livePingMs,
+    liveJitterMs,
+    liveDownloadMbps,
+    liveUploadMbps,
+    liveLoadedPingMs,
+    livePacketLossPct,
+    samples,
+    latestResult,
+    history,
+    networkInfo,
+    browserHint,
+    errorMessage,
+    isMonitoring,
+    monitorSamples,
+    startPrecisionTest,
+    cancelTest,
+    startRealtimeMonitor,
+    stopRealtimeMonitor,
+    saveMonitorSnapshot,
+    clearHistory,
+    refreshNetworkInfo,
+  };
+}
