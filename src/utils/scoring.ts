@@ -1,6 +1,7 @@
 import type {
   ActivityVerdict,
   BenchmarkProfile,
+  BufferbloatSummary,
   SpeedTestResult,
   SpeedUnit,
   VerdictTier,
@@ -151,6 +152,59 @@ export function getScoreLabel(score: number): {
   return {label: 'Constrained', tone: 'rose'};
 }
 
+export function evaluateBufferbloat(
+  unloadedPingMs: number,
+  loadedPingMs: number,
+): BufferbloatSummary {
+  const deltaMs = Math.max(0, Number((loadedPingMs - unloadedPingMs).toFixed(1)));
+  if (deltaMs <= 5) {
+    return {
+      grade: 'A+',
+      deltaMs,
+      label: 'Zero Bufferbloat',
+      summary: 'Latency stays flat under full load — ideal for competitive gaming and real-time voice.',
+    };
+  }
+  if (deltaMs <= 15) {
+    return {
+      grade: 'A',
+      deltaMs,
+      label: 'Minimal Bufferbloat',
+      summary: 'Very low latency increase during heavy transfers.',
+    };
+  }
+  if (deltaMs <= 30) {
+    return {
+      grade: 'B',
+      deltaMs,
+      label: 'Low Bufferbloat',
+      summary: 'Manageable latency spike under load; smooth for most streaming and calls.',
+    };
+  }
+  if (deltaMs <= 60) {
+    return {
+      grade: 'C',
+      deltaMs,
+      label: 'Moderate Bufferbloat',
+      summary: 'Noticeable ping rise during uploads/downloads; QoS or SQM router shaping can help.',
+    };
+  }
+  if (deltaMs <= 120) {
+    return {
+      grade: 'D',
+      deltaMs,
+      label: 'High Bufferbloat',
+      summary: 'Significant latency inflation under load; video calls and gaming may lag during downloads.',
+    };
+  }
+  return {
+    grade: 'F',
+    deltaMs,
+    label: 'Severe Bufferbloat',
+    summary: 'Heavy router queue buildup under load; enable SQM / Smart Queue Management on your router.',
+  };
+}
+
 export function evaluateActivities(params: {
   downloadMbps: number;
   uploadMbps: number;
@@ -289,6 +343,7 @@ export function exportHistoryCSV(results: SpeedTestResult[]): void {
     'Loaded Ping (ms)',
     'Jitter (ms)',
     'Packet Loss (%)',
+    'Bufferbloat Grade',
     'Duration (s)',
     'ISP',
     'Country',
@@ -306,6 +361,7 @@ export function exportHistoryCSV(results: SpeedTestResult[]): void {
     r.loadedPingMs.toFixed(1),
     r.jitterMs.toFixed(1),
     r.packetLossPct.toFixed(1),
+    r.bufferbloatGrade ?? evaluateBufferbloat(r.pingMs, r.loadedPingMs).grade,
     r.durationSec !== undefined ? r.durationSec.toFixed(1) : '',
     `"${(r.network.isp || 'Unknown').replace(/"/g, '""')}"`,
     `"${(r.network.country || '').replace(/"/g, '""')}"`,

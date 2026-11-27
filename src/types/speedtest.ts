@@ -11,6 +11,32 @@ export type TestMode = 'precision' | 'file' | 'realtime';
 
 export type SpeedUnit = 'Mbps' | 'MBps';
 
+export type BufferbloatGrade = 'A+' | 'A' | 'B' | 'C' | 'D' | 'F';
+
+export interface BufferbloatSummary {
+  grade: BufferbloatGrade;
+  deltaMs: number;
+  label: string;
+  summary: string;
+}
+
+export interface EdgeNode {
+  id: string;
+  label: string;
+  region: string;
+  rttMs: number | null;
+  available: boolean;
+  isPrimary?: boolean;
+}
+
+export interface DnsBenchmarkEntry {
+  id: string;
+  name: string;
+  ip: string;
+  latencyMs: number | null;
+  status: 'Fast' | 'Average' | 'Slow' | 'Unavailable';
+}
+
 export interface TransferProgress {
   bytes: number;
   targetBytes: number;
@@ -81,6 +107,7 @@ export interface SpeedTestResult {
   jitterMs: number;
   packetLossPct: number;
   veloxisScore: number;
+  bufferbloatGrade?: BufferbloatGrade;
   activities: ActivityVerdict[];
   network: NetworkInfo;
   samples: TelemetrySample[];

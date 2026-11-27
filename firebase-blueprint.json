@@ -1,0 +1,252 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Private user account metadata for cloud sync across Veloxis devices.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 254
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "displayName", "updatedAt"]
+    },
+    "UserSettings": {
+      "title": "UserSettings",
+      "description": "Synced ISP subscription plan, speed unit preference, and reliability watch configuration.",
+      "type": "object",
+      "properties": {
+        "ownerUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "planName": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "subscribedDownloadMbps": {
+          "type": "number"
+        },
+        "subscribedUploadMbps": {
+          "type": "number"
+        },
+        "monthlyPrice": {
+          "type": "number"
+        },
+        "currencyCode": {
+          "type": "string",
+          "maxLength": 8
+        },
+        "speedUnit": {
+          "type": "string",
+          "enum": ["Mbps", "MBps"],
+          "maxLength": 8
+        },
+        "watchIntervalMin": {
+          "type": "number"
+        },
+        "watchThresholdPct": {
+          "type": "number"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["ownerUid", "speedUnit", "updatedAt"]
+    },
+    "SpeedTestRun": {
+      "title": "SpeedTestRun",
+      "description": "Persisted speed test run synced across devices for trends and side-by-side comparison.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "timestamp": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["precision", "file", "realtime"],
+          "maxLength": 16
+        },
+        "downloadMbps": {
+          "type": "number"
+        },
+        "uploadMbps": {
+          "type": "number"
+        },
+        "pingMs": {
+          "type": "number"
+        },
+        "loadedPingMs": {
+          "type": "number"
+        },
+        "jitterMs": {
+          "type": "number"
+        },
+        "packetLossPct": {
+          "type": "number"
+        },
+        "veloxisScore": {
+          "type": "number"
+        },
+        "bufferbloatGrade": {
+          "type": "string",
+          "enum": ["A+", "A", "B", "C", "D", "F"],
+          "maxLength": 4
+        },
+        "serverNode": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "isp": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "country": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "durationSec": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "timestamp",
+        "mode",
+        "downloadMbps",
+        "uploadMbps",
+        "pingMs",
+        "loadedPingMs",
+        "jitterMs",
+        "packetLossPct",
+        "veloxisScore",
+        "createdAt"
+      ]
+    },
+    "SyncedDevice": {
+      "title": "SyncedDevice",
+      "description": "Connected device telemetry synced across user sessions.",
+      "type": "object",
+      "properties": {
+        "deviceId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "os": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "browser": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "deviceType": {
+          "type": "string",
+          "enum": ["Desktop", "Mobile", "Tablet"],
+          "maxLength": 24
+        },
+        "linkType": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "rttMs": {
+          "type": "number"
+        },
+        "bytesDown": {
+          "type": "number"
+        },
+        "bytesUp": {
+          "type": "number"
+        },
+        "downloadMbps": {
+          "type": "number"
+        },
+        "uploadMbps": {
+          "type": "number"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "deviceId",
+        "ownerUid",
+        "label",
+        "os",
+        "browser",
+        "deviceType",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserProfile"
+      },
+      "description": "Private authenticated user profile document."
+    },
+    "/users/{userId}/settings/{settingId}": {
+      "schema": {
+        "$ref": "#/entities/UserSettings"
+      },
+      "description": "Synced ISP subscription plan and user preferences."
+    },
+    "/users/{userId}/tests/{testId}": {
+      "schema": {
+        "$ref": "#/entities/SpeedTestRun"
+      },
+      "description": "User's cloud-synced speed test runs."
+    },
+    "/users/{userId}/devices/{deviceId}": {
+      "schema": {
+        "$ref": "#/entities/SyncedDevice"
+      },
+      "description": "User's synced devices and session bandwidth usage."
+    }
+  }
+}

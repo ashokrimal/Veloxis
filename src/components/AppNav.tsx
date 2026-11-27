@@ -1,5 +1,6 @@
 import React from 'react';
-import {Download, Gauge, History, Laptop} from 'lucide-react';
+import {Cloud, Download, Gauge, History, Laptop, LogOut} from 'lucide-react';
+import type {User} from 'firebase/auth';
 
 export type PageAnchor = 'console' | 'diagnostics' | 'benchmark' | 'history';
 
@@ -10,6 +11,10 @@ interface AppNavProps {
   onOpenHistory: () => void;
   onOpenDistribution: () => void;
   isInstalled: boolean;
+  cloudUser: User | null;
+  authLoading?: boolean;
+  onSignIn: () => void;
+  onSignOut: () => void;
 }
 
 function BrandMark() {
@@ -58,6 +63,10 @@ export const AppNav: React.FC<AppNavProps> = ({
   onOpenHistory,
   onOpenDistribution,
   isInstalled,
+  cloudUser,
+  authLoading = false,
+  onSignIn,
+  onSignOut,
 }) => {
   const scrollToSection = (anchor: PageAnchor) => {
     onSelectAnchor(anchor);
@@ -167,8 +176,36 @@ export const AppNav: React.FC<AppNavProps> = ({
             </button>
           </nav>
 
-          {/* Zone 3: Primary Action */}
-          <div className="flex items-center shrink-0">
+          {/* Zone 3: Primary Actions (Cloud Sync + Install App/Extension) */}
+          <div className="flex items-center gap-2.5 shrink-0">
+            {!authLoading &&
+              (cloudUser ? (
+                <div className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 dark:border-emerald-900/70 bg-emerald-50/70 dark:bg-emerald-950/40 px-2.5 py-1.5 text-xs font-medium text-emerald-800 dark:text-emerald-300">
+                  <Cloud className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  <span className="max-w-[110px] truncate">
+                    {cloudUser.displayName?.split(' ')[0] || 'Synced'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={onSignOut}
+                    title="Sign out of Cloud Sync"
+                    aria-label="Sign out of Cloud Sync"
+                    className="ml-1 rounded p-0.5 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 cursor-pointer"
+                  >
+                    <LogOut className="h-3 w-3" aria-hidden="true" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onSignIn}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  <Cloud className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+                  <span>Cloud Sync</span>
+                </button>
+              ))}
+
             <button
               type="button"
               onClick={onOpenDistribution}
@@ -195,14 +232,38 @@ export const AppNav: React.FC<AppNavProps> = ({
           <span>Veloxis</span>
         </a>
 
-        <button
-          type="button"
-          onClick={onOpenDistribution}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-900 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800 whitespace-nowrap cursor-pointer"
-        >
-          <Download className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" aria-hidden="true" />
-          <span>{isInstalled ? 'Extension' : 'Install'}</span>
-        </button>
+        <div className="flex items-center gap-2">
+          {!authLoading &&
+            (cloudUser ? (
+              <button
+                type="button"
+                onClick={onSignOut}
+                title="Signed in — tap to sign out"
+                className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 dark:border-emerald-900/70 bg-emerald-50/80 dark:bg-emerald-950/40 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 whitespace-nowrap cursor-pointer"
+              >
+                <Cloud className="h-3 w-3" aria-hidden="true" />
+                <span>Synced</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onSignIn}
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 dark:text-slate-200 whitespace-nowrap cursor-pointer"
+              >
+                <Cloud className="h-3 w-3 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+                <span>Sync</span>
+              </button>
+            ))}
+
+          <button
+            type="button"
+            onClick={onOpenDistribution}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-900 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800 whitespace-nowrap cursor-pointer"
+          >
+            <Download className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+            <span>{isInstalled ? 'Extension' : 'Install'}</span>
+          </button>
+        </div>
       </div>
 
       {/* MOBILE FIXED BOTTOM NAVBAR (Thumb-Zone Navigation Anchor) */}

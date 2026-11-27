@@ -1,5 +1,6 @@
 import express from 'express';
 import crypto from 'node:crypto';
+import dns from 'node:dns';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -413,8 +414,124 @@ async function startServer() {
     next();
   });
 
-  app.get('/api/speedtest/ping', (_req, res) => {
-    res.json({ok: true, serverTime: Date.now()});
+  interface EdgeNodeDef {
+    id: string;
+    label: string;
+    region: string;
+    probeUrl: string | null;
+    isPrimary?: boolean;
+  }
+
+  const EDGE_NODES: EdgeNodeDef[] = [
+    {
+      id: 'local',
+      label: 'Veloxis Edge · Local Node',
+      region: 'Primary Host',
+      probeUrl: null,
+      isPrimary: true,
+    },
+    {
+      id: 'asia-east',
+      label: 'Tokyo Edge (AP-Northeast)',
+      region: 'Asia-East',
+      probeUrl: 'https://s3.ap-northeast-1.amazonaws.com/ping',
+    },
+    {
+      id: 'asia-south',
+      label: 'Singapore Edge (AP-Southeast)',
+      region: 'Asia-South',
+      probeUrl: 'https://s3.ap-southeast-1.amazonaws.com/ping',
+    },
+    {
+      id: 'us-west',
+      label: 'Oregon Edge (US-West)',
+      region: 'North America',
+      probeUrl: 'https://s3.us-west-2.amazonaws.com/ping',
+    },
+    {
+      id: 'eu-central',
+      label: 'Frankfurt Edge (EU-Central)',
+      region: 'Europe',
+      probeUrl: 'https://s3.eu-central-1.amazonaws.com/ping',
+    },
+  ];
+
+  async function probeEdgeUrl(url: string): Promise<number | null> {
+    const start = process.hrtime.bigint();
+    try {
+      await fetch(url, {
+        method: 'HEAD',
+        signal: AbortSignal.timeout(2200),
+      });
+      const ms = Number(process.hrtime.bigint() - start) / 1e6;
+      return Math.max(1, Number(ms.toFixed(1)));
+    } catch {
+      return null;
+    }
+  }
+
+  app.get('/api/edge-nodes', async (_req, res) => {
+    const results = await Promise.all(
+      EDGE_NODES.map(async (node) => {
+        if (!node.probeUrl) {
+          return {
+            id: node.id,
+            label: node.label,
+            region: node.region,
+            rttMs: 1,
+            available: true,
+            isPrimary: true,
+          };
+        }
+        const hopMs = await probeEdgeUrl(node.probeUrl);
+        return {
+          id: node.id,
+          label: node.label,
+          region: node.region,
+          rttMs: hopMs,
+          available: hopMs !== null,
+          isPrimary: false,
+        };
+      }),
+    );
+    res.json({nodes: results});
+  });
+
+  app.get('/api/dns-benchmark/system', async (_req, res) => {
+    const start = process.hrtime.bigint();
+    try {
+      await dns.promises.lookup('example.com', {all: false});
+      const ms = Number(process.hrtime.bigint() - start) / 1e6;
+      res.json({
+        ok: true,
+        resolver: 'System / ISP Resolver',
+        latencyMs: Math.max(1, Number(ms.toFixed(1))),
+      });
+    } catch {
+      res.json({
+        ok: false,
+        resolver: 'System / ISP Resolver',
+        latencyMs: null,
+      });
+    }
+  });
+
+  app.get('/api/speedtest/ping', async (req, res) => {
+    const nodeId = typeof req.query.node === 'string' ? req.query.node : 'local';
+    const nodeDef = EDGE_NODES.find((n) => n.id === nodeId);
+    let edgeHopMs = 0;
+    if (nodeDef?.probeUrl) {
+      const measured = await probeEdgeUrl(nodeDef.probeUrl);
+      if (measured !== null) {
+        edgeHopMs = measured;
+      }
+    }
+    res.json({
+      ok: true,
+      node: nodeDef?.id ?? 'local',
+      edgeHopMs,
+      serverTime: Date.now(),
+    });
   });
 
   app.get('/api/speedtest/download', (req, res) => {
@@ -657,14 +774,44 @@ async function startServer() {
     }
   });
 
+  app.get('/ads.txt', (_req, res) => {
+    res.type('text/plain; charset=utf-8');
+    res.send('google.com, pub-1138327552755079, DIRECT, f08c47fec0942fa0\n');
+  });
+
   const httpServer = http.createServer(app);
+  const hmrDisabled = process.env.DISABLE_HMR === 'true';
 
   if (!IS_PROD) {
     const {createServer: createViteServer} = await import('vite');
     const vite = await createViteServer({
+      plugins: hmrDisabled
+        ? [
+            {
+              name: 'veloxis-disable-vite-client-ws',
+              enforce: 'post',
+              transform(code, id) {
+                if (id.replace(/\\/g, '/').endsWith('vite/dist/client/client.mjs')) {
+                  return code
+                    .replace(
+                      'transport.connect(createHMRHandler(handleMessage));',
+                      '/* HMR WebSocket disabled via DISABLE_HMR */',
+                    )
+                    .replace(
+                      'setupForwardConsoleHandler(transport, forwardConsole);',
+                      '/* forwardConsole disabled via DISABLE_HMR */',
+                    );
+                }
+                return null;
+              },
+            },
+          ]
+        : [],
       server: {
         middlewareMode: true,
-        hmr: process.env.DISABLE_HMR === 'true' ? false : {server: httpServer},
+        allowedHosts: true,
+        hmr: hmrDisabled ? false : {server: httpServer},
+        ws: hmrDisabled ? false : {server: httpServer},
       },
       appType: 'spa',
     });

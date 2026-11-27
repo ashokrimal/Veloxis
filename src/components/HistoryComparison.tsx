@@ -1,5 +1,14 @@
-import React from 'react';
-import {ArrowDownRight, ArrowLeftRight, ArrowUpRight, Minus, X} from 'lucide-react';
+import React, {useState} from 'react';
+import {
+  ArrowDownRight,
+  ArrowLeftRight,
+  ArrowUpRight,
+  Check,
+  Copy,
+  ImageDown,
+  Minus,
+  X,
+} from 'lucide-react';
 import {motion} from 'motion/react';
 import type {SpeedTestResult, SpeedUnit} from '../types/speedtest';
 import {
@@ -8,12 +17,17 @@ import {
   formatTransferSize,
   getScoreLabel,
 } from '../utils/scoring';
+import {
+  downloadComparisonReportPng,
+  formatComparisonSummaryText,
+} from '../utils/shareReport';
 
 interface HistoryComparisonProps {
   history: SpeedTestResult[];
   runAId: string;
   runBId: string;
   speedUnit: SpeedUnit;
+  isDark?: boolean;
   onChangeRunA: (id: string) => void;
   onChangeRunB: (id: string) => void;
   onSwapRuns: () => void;
@@ -62,15 +76,29 @@ export const HistoryComparison: React.FC<HistoryComparisonProps> = ({
   runAId,
   runBId,
   speedUnit,
+  isDark = false,
   onChangeRunA,
   onChangeRunB,
   onSwapRuns,
   onClose,
 }) => {
+  const [copied, setCopied] = useState(false);
   const runA = history.find((r) => r.id === runAId) ?? history[1] ?? history[0];
   const runB = history.find((r) => r.id === runBId) ?? history[0];
 
   if (!runA || !runB) return null;
+
+  const handleCopyComparison = async () => {
+    try {
+      await navigator.clipboard.writeText(
+        formatComparisonSummaryText(runA, runB, speedUnit),
+      );
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Ignore clipboard failure
+    }
+  };
 
   const speedDecimals = speedUnit === 'MBps' ? 2 : 1;
 
@@ -188,7 +216,29 @@ export const HistoryComparison: React.FC<HistoryComparisonProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={handleCopyComparison}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer whitespace-nowrap"
+          >
+            {copied ? (
+              <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+            ) : (
+              <Copy className="h-3.5 w-3.5 text-slate-500 dark:text-slate-400" aria-hidden="true" />
+            )}
+            <span>{copied ? 'Copied' : 'Copy'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => downloadComparisonReportPng(runA, runB, speedUnit, isDark)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer whitespace-nowrap"
+          >
+            <ImageDown className="h-3.5 w-3.5 text-slate-500 dark:text-slate-400" aria-hidden="true" />
+            <span>PNG</span>
+          </button>
+
           <button
             type="button"
             onClick={onSwapRuns}

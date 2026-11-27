@@ -2,6 +2,7 @@ import {useCallback, useEffect, useRef, useState} from 'react';
 import type {
   BrowserConnectionHint,
   DetectedDevice,
+  EdgeNode,
   NetworkInfo,
   RegionalIspsResponse,
   SpeedTestResult,
@@ -14,7 +15,11 @@ import {
   detectLocalDeviceMetadata,
   getBrowserResourceBytes,
 } from '../utils/deviceDetection';
-import {calculateVeloxisScore, evaluateActivities} from '../utils/scoring';
+import {
+  calculateVeloxisScore,
+  evaluateActivities,
+  evaluateBufferbloat,
+} from '../utils/scoring';
 
 const HISTORY_STORAGE_KEY = 'veloxis_speed_history_v1';
 
@@ -120,6 +125,18 @@ export function useSpeedTest() {
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [monitorSamples, setMonitorSamples] = useState<TelemetrySample[]>([]);
   const [detectedDevices, setDetectedDevices] = useState<DetectedDevice[]>([]);
+  const [edgeNodes, setEdgeNodes] = useState<EdgeNode[]>([
+    {
+      id: 'local',
+      label: 'Veloxis Edge · Local Node',
+      region: 'Primary Host',
+      rttMs: null,
+      available: true,
+      isPrimary: true,
+    },
+  ]);
+  const [selectedNodeId, setSelectedNodeId] = useState<string>('auto');
+  const [isProbingNodes, setIsProbingNodes] = useState(false);
   const [regionalIsps, setRegionalIsps] = useState<RegionalIspsResponse>({
     countryCode: '',
     operators: [],
@@ -290,9 +307,39 @@ export function useSpeedTest() {
     await syncDevices({hint: nextHint});
   }, [syncDevices]);
 
+  const probeEdgeNodes = useCallback(async () => {
+    setIsProbingNodes(true);
+    try {
+      const res = await fetch(`/api/edge-nodes?t=${Date.now()}`, {
+        cache: 'no-store',
+        signal: AbortSignal.timeout(4500),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as {nodes?: EdgeNode[]};
+        if (Array.isArray(data.nodes) && data.nodes.length > 0) {
+          setEdgeNodes(data.nodes);
+        }
+      }
+    } catch {
+      // Keep current edge node list on transient error
+    } finally {
+      setIsProbingNodes(false);
+    }
+  }, []);
+
   useEffect(() => {
     refreshNetworkInfo();
-  }, [refreshNetworkInfo]);
+    void probeEdgeNodes();
+  }, [probeEdgeNodes, refreshNetworkInfo]);
+
+  const effectiveNode =
+    selectedNodeId === 'auto'
+      ? [...edgeNodes]
+          .filter((n) => n.available)
+          .sort((a, b) => (a.rttMs ?? 9999) - (b.rttMs ?? 9999))[0] ??
+        edgeNodes[0] ??
+        null
+      : edgeNodes.find((n) => n.id === selectedNodeId) ?? edgeNodes[0] ?? null;
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -408,12 +455,13 @@ export function useSpeedTest() {
         const pingValues: number[] = [];
         let failedPings = 0;
 
+        const activeNodeId = effectiveNode?.id ?? 'local';
         for (let i = 0; i < pingTotal; i++) {
-          if (signal.aborted) return;
+          if (signal.aborted) return null;
           const pStart = performance.now();
           try {
             const res = await fetch(
-              `/api/speedtest/ping?seq=${i}&t=${Date.now()}`,
+              `/api/speedtest/ping?seq=${i}&node=${encodeURIComponent(activeNodeId)}&t=${Date.now()}`,
               {cache: 'no-store', signal},
             );
             if (!res.ok) throw new Error('Ping failed');
@@ -435,7 +483,7 @@ export function useSpeedTest() {
             recordedSamples.push(pt);
             setSamples([...recordedSamples]);
           } catch {
-            if (signal.aborted) return;
+            if (signal.aborted) return null;
             failedPings += 1;
           }
           setProgressPct(4 + Math.round(((i + 1) / pingTotal) * 14));
@@ -544,10 +592,13 @@ export function useSpeedTest() {
             }
             const p0 = performance.now();
             try {
-              await fetch(`/api/speedtest/ping?loaded=1&t=${Date.now()}`, {
-                cache: 'no-store',
-                signal,
-              });
+              await fetch(
+                `/api/speedtest/ping?loaded=1&node=${encodeURIComponent(effectiveNode?.id ?? 'local')}&t=${Date.now()}`,
+                {
+                  cache: 'no-store',
+                  signal,
+                },
+              );
               const rtt = performance.now() - p0;
               loadedPings.push(rtt);
               setLiveLoadedPingMs(median(loadedPings));
@@ -643,7 +694,7 @@ export function useSpeedTest() {
         }
 
         window.clearInterval(dlSampler);
-        if (signal.aborted) return;
+        if (signal.aborted) return null;
 
         const totalDlSec = Math.max(0.4, (performance.now() - dlStart) / 1000);
         const steadyDlSec = Math.max(
@@ -788,7 +839,7 @@ export function useSpeedTest() {
 
         await Promise.all([runUploadWorker(), runUploadWorker(), runUploadWorker()]);
         window.clearInterval(ulSampler);
-        if (signal.aborted) return;
+        if (signal.aborted) return null;
 
         const totalUlSec = Math.max(0.4, (performance.now() - ulStart) / 1000);
         const steadyUlSec = Math.max(
@@ -834,6 +885,7 @@ export function useSpeedTest() {
           packetLossPct,
         });
 
+        const bloat = evaluateBufferbloat(unloadedPing, loadedPing);
         const result: SpeedTestResult = {
           id: `vx_${Date.now()}`,
           timestamp: new Date().toISOString(),
@@ -845,8 +897,12 @@ export function useSpeedTest() {
           jitterMs: Number(jitter.toFixed(1)),
           packetLossPct,
           veloxisScore: score,
+          bufferbloatGrade: bloat.grade,
           activities,
-          network: networkInfo,
+          network: {
+            ...networkInfo,
+            serverNode: effectiveNode?.label ?? networkInfo.serverNode,
+          },
           samples: recordedSamples,
           durationSec: totalDurationSec,
           transferredBytes: isFileMode
@@ -870,6 +926,7 @@ export function useSpeedTest() {
           rttMs: result.pingMs,
           testing: false,
         });
+        return result;
       } catch {
         if (elapsedTimerRef.current !== null) {
           window.clearInterval(elapsedTimerRef.current);
@@ -883,9 +940,10 @@ export function useSpeedTest() {
           );
           setPhase('error');
         }
+        return null;
       }
     },
-    [networkInfo, stopAll, syncDevices],
+    [effectiveNode?.id, effectiveNode?.label, networkInfo, stopAll, syncDevices],
   );
 
   const startRealtimeMonitor = useCallback(() => {
@@ -1010,6 +1068,7 @@ export function useSpeedTest() {
       jitterMs: Number(jit.toFixed(1)),
       packetLossPct: 0,
       veloxisScore: score,
+      bufferbloatGrade: evaluateBufferbloat(medPing, medPing + jit).grade,
       activities: evaluateActivities({
         downloadMbps: avgDl,
         uploadMbps: recordedUl,
@@ -1018,7 +1077,10 @@ export function useSpeedTest() {
         jitterMs: jit,
         packetLossPct: 0,
       }),
-      network: networkInfo,
+      network: {
+        ...networkInfo,
+        serverNode: effectiveNode?.label ?? networkInfo.serverNode,
+      },
       samples: monitorSamples,
     };
 
@@ -1029,7 +1091,32 @@ export function useSpeedTest() {
       return next;
     });
     return snapshot;
-  }, [latestResult?.downloadMbps, latestResult?.uploadMbps, monitorSamples, networkInfo]);
+  }, [
+    effectiveNode?.label,
+    latestResult?.downloadMbps,
+    latestResult?.uploadMbps,
+    monitorSamples,
+    networkInfo,
+  ]);
+
+  const mergeRemoteHistory = useCallback((remoteRuns: SpeedTestResult[]) => {
+    setHistory((prev) => {
+      const byId = new Map<string, SpeedTestResult>();
+      for (const item of prev) byId.set(item.id, item);
+      for (const item of remoteRuns) {
+        const existing = byId.get(item.id);
+        byId.set(item.id, existing ? {...item, samples: existing.samples} : item);
+      }
+      const merged = Array.from(byId.values())
+        .sort(
+          (a, b) =>
+            new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+        )
+        .slice(0, 50);
+      saveHistory(merged);
+      return merged;
+    });
+  }, []);
 
   const clearHistory = useCallback(() => {
     setHistory([]);
@@ -1060,6 +1147,10 @@ export function useSpeedTest() {
     regionalIsps,
     browserHint,
     detectedDevices,
+    edgeNodes,
+    selectedNodeId,
+    effectiveNode,
+    isProbingNodes,
     errorMessage,
     isMonitoring,
     monitorSamples,
@@ -1069,6 +1160,9 @@ export function useSpeedTest() {
     stopRealtimeMonitor,
     saveMonitorSnapshot,
     clearHistory,
+    mergeRemoteHistory,
     refreshNetworkInfo,
+    setSelectedNodeId,
+    probeEdgeNodes,
   };
 }

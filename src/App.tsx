@@ -1,8 +1,12 @@
-import {useEffect, useRef, useState} from 'react';
+import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {
   Activity,
   BookmarkPlus,
+  Check,
+  Copy,
+  Download,
   HardDriveDownload,
+  Keyboard,
   Pause,
   Play,
   RotateCcw,
@@ -17,13 +21,18 @@ import {AdSlot} from './components/AdSlot';
 import {AnimatedNumber} from './components/AnimatedNumber';
 import {AppNav, type PageAnchor} from './components/AppNav';
 import {DevicePlanBenchmark} from './components/DevicePlanBenchmark';
+import {EdgeNodeSelector} from './components/EdgeNodeSelector';
+import {ErrorBoundary} from './components/ErrorBoundary';
 import {HistoryTrendsChart} from './components/HistoryTrendsChart';
 import {HistoryView} from './components/HistoryView';
 import {InstallExtensionModal} from './components/InstallExtensionModal';
 import {PrecisionGauge} from './components/PrecisionGauge';
+import {ReliabilityWatchCard} from './components/ReliabilityWatchCard';
 import {TelemetryWaveform} from './components/TelemetryWaveform';
 import {TransferAlertModal} from './components/TransferAlertModal';
 import {useAdConsent} from './hooks/useAdConsent';
+import {useCloudSync} from './hooks/useCloudSync';
+import {useKeyboardShortcuts} from './hooks/useKeyboardShortcuts';
 import {useOnlineStatus} from './hooks/useOnlineStatus';
 import {usePWAInstall} from './hooks/usePWAInstall';
 import {useSpeedTest} from './hooks/useSpeedTest';
@@ -31,6 +40,7 @@ import {useSystemTheme} from './hooks/useSystemTheme';
 import {useTelemetryAudio} from './hooks/useTelemetryAudio';
 import type {
   BenchmarkProfile,
+  DetectedDevice,
   SpeedUnit,
   TestMode,
   TestPhase,
@@ -40,12 +50,19 @@ import {
   convertSpeed,
   estimateTestDurationSec,
   formatDuration,
+  formatSpeedValue,
   formatTransferSize,
   getScoreLabel,
 } from './utils/scoring';
+import {
+  downloadResultReportPng,
+  formatResultSummaryText,
+} from './utils/shareReport';
 
 const PROFILE_STORAGE_KEY = 'veloxis_benchmark_profile_v2';
 const UNIT_STORAGE_KEY = 'veloxis_speed_unit_v1';
+const WATCH_INTERVAL_KEY = 'veloxis_watch_interval_min_v1';
+const WATCH_THRESHOLD_KEY = 'veloxis_watch_threshold_pct_v1';
 
 const DEFAULT_PROFILE: BenchmarkProfile = {
   planName: '',
@@ -74,6 +91,17 @@ function loadSpeedUnit(): SpeedUnit {
   }
 }
 
+function loadWatchNumber(key: string, fallback: number): number {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw === null) return fallback;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 export default function App() {
   const [activeAnchor, setActiveAnchor] = useState<PageAnchor>('console');
   const [consoleMode, setConsoleMode] = useState<TestMode>('precision');
@@ -83,6 +111,20 @@ export default function App() {
   const [snapshotNotice, setSnapshotNotice] = useState<string | null>(null);
   const [profile, setProfile] = useState<BenchmarkProfile>(loadProfile);
   const [speedUnit, setSpeedUnit] = useState<SpeedUnit>(loadSpeedUnit);
+  const [watchIntervalMin, setWatchIntervalMin] = useState<number>(() =>
+    loadWatchNumber(WATCH_INTERVAL_KEY, 0),
+  );
+  const [watchThresholdPct, setWatchThresholdPct] = useState<number>(() =>
+    loadWatchNumber(WATCH_THRESHOLD_KEY, 70),
+  );
+  const [watchCountdownSec, setWatchCountdownSec] = useState<number | null>(null);
+  const [watchRunsCount, setWatchRunsCount] = useState(0);
+  const [watchAlertsCount, setWatchAlertsCount] = useState(0);
+  const [watchAlertMessage, setWatchAlertMessage] = useState<string | null>(null);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  const [copiedReport, setCopiedReport] = useState(false);
+  const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
+  const [remoteCloudDevices, setRemoteCloudDevices] = useState<DetectedDevice[]>([]);
 
   const {isDark} = useSystemTheme();
   const isOnline = useOnlineStatus();
@@ -108,6 +150,10 @@ export default function App() {
     networkInfo,
     regionalIsps,
     detectedDevices,
+    edgeNodes,
+    selectedNodeId,
+    effectiveNode,
+    isProbingNodes,
     errorMessage,
     isMonitoring,
     monitorSamples,
@@ -117,8 +163,48 @@ export default function App() {
     stopRealtimeMonitor,
     saveMonitorSnapshot,
     clearHistory,
+    mergeRemoteHistory,
     refreshNetworkInfo,
+    setSelectedNodeId,
+    probeEdgeNodes,
   } = useSpeedTest();
+
+  const skipSyncPushRef = useRef(false);
+
+  const {
+    user: cloudUser,
+    authLoading,
+    authError,
+    signInWithGoogle,
+    signOutUser,
+    pushTestRunToCloud,
+    pushSettingsToCloud,
+    pushDeviceToCloud,
+    broadcastHistoryCleared,
+  } = useCloudSync({
+    onReceiveRemoteTests: mergeRemoteHistory,
+    onReceiveRemoteSettings: (settings) => {
+      skipSyncPushRef.current = true;
+      if (settings.profile) {
+        setProfile((prev) => ({...prev, ...settings.profile}));
+      }
+      if (settings.speedUnit) {
+        setSpeedUnit(settings.speedUnit);
+      }
+      if (typeof settings.watchIntervalMin === 'number') {
+        setWatchIntervalMin(settings.watchIntervalMin);
+      }
+      if (typeof settings.watchThresholdPct === 'number') {
+        setWatchThresholdPct(settings.watchThresholdPct);
+      }
+      window.setTimeout(() => {
+        skipSyncPushRef.current = false;
+      }, 150);
+    },
+    onReceiveRemoteDevices: setRemoteCloudDevices,
+    onLocalTabTest: (test) => mergeRemoteHistory([test]),
+    onLocalTabHistoryCleared: clearHistory,
+  });
 
   const {
     isMuted,
@@ -177,6 +263,50 @@ export default function App() {
       // Ignore storage quota errors
     }
   }, [speedUnit]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(WATCH_INTERVAL_KEY, String(watchIntervalMin));
+      localStorage.setItem(WATCH_THRESHOLD_KEY, String(watchThresholdPct));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [watchIntervalMin, watchThresholdPct]);
+
+  useEffect(() => {
+    if (skipSyncPushRef.current) return;
+    void pushSettingsToCloud({
+      profile,
+      speedUnit,
+      watchIntervalMin,
+      watchThresholdPct,
+    });
+  }, [
+    profile,
+    pushSettingsToCloud,
+    speedUnit,
+    watchIntervalMin,
+    watchThresholdPct,
+  ]);
+
+  useEffect(() => {
+    if (!cloudUser) return;
+    const currentDev = detectedDevices.find((d) => d.isCurrentDevice);
+    if (currentDev) {
+      void pushDeviceToCloud(currentDev);
+    }
+  }, [cloudUser, detectedDevices, pushDeviceToCloud]);
+
+  const mergedDevices = useMemo(() => {
+    const byId = new Map<string, DetectedDevice>();
+    for (const remote of remoteCloudDevices) {
+      byId.set(remote.deviceId, remote);
+    }
+    for (const local of detectedDevices) {
+      byId.set(local.deviceId, local);
+    }
+    return Array.from(byId.values());
+  }, [detectedDevices, remoteCloudDevices]);
 
   const isTesting =
     phase === 'ping' ||
@@ -274,42 +404,60 @@ export default function App() {
     setConsoleMode(nextMode);
   };
 
-  const handleTriggerStart = () => {
+  const handleTriggerStart = useCallback(async () => {
     if (consoleMode === 'file') {
       setIsTransferAlertOpen(true);
       return;
     }
     lastProgressBucketRef.current = 0;
     playStart();
-    startPrecisionTest({mode: 'precision'});
-  };
+    const res = await startPrecisionTest({mode: 'precision'});
+    if (res) {
+      void pushTestRunToCloud(res);
+    }
+  }, [consoleMode, playStart, pushTestRunToCloud, startPrecisionTest]);
 
-  const handleConfirmFileTest = (downloadBytes: number, uploadBytes: number) => {
-    setConsoleMode('file');
-    lastProgressBucketRef.current = 0;
-    playStart();
-    startPrecisionTest({
-      mode: 'file',
-      downloadBytes,
-      uploadBytes,
-      expectedDownloadMbps:
-        profile.subscribedDownloadMbps ?? latestResult?.downloadMbps ?? null,
-      expectedUploadMbps:
-        profile.subscribedUploadMbps ??
-        profile.subscribedDownloadMbps ??
-        latestResult?.uploadMbps ??
-        null,
-    });
-  };
+  const handleConfirmFileTest = useCallback(
+    async (downloadBytes: number, uploadBytes: number) => {
+      setConsoleMode('file');
+      lastProgressBucketRef.current = 0;
+      playStart();
+      const res = await startPrecisionTest({
+        mode: 'file',
+        downloadBytes,
+        uploadBytes,
+        expectedDownloadMbps:
+          profile.subscribedDownloadMbps ?? latestResult?.downloadMbps ?? null,
+        expectedUploadMbps:
+          profile.subscribedUploadMbps ??
+          profile.subscribedDownloadMbps ??
+          latestResult?.uploadMbps ??
+          null,
+      });
+      if (res) {
+        void pushTestRunToCloud(res);
+      }
+    },
+    [
+      latestResult?.downloadMbps,
+      latestResult?.uploadMbps,
+      playStart,
+      profile.subscribedDownloadMbps,
+      profile.subscribedUploadMbps,
+      pushTestRunToCloud,
+      startPrecisionTest,
+    ],
+  );
 
-  const handleCancelTest = () => {
+  const handleCancelTest = useCallback(() => {
     playCancel();
     cancelTest();
-  };
+  }, [cancelTest, playCancel]);
 
   const handleSaveSnapshot = () => {
     const saved = saveMonitorSnapshot();
     if (saved) {
+      void pushTestRunToCloud(saved);
       setSnapshotNotice(
         `Saved snapshot (${saved.downloadMbps.toFixed(1)} Mbps · Score ${saved.veloxisScore})`,
       );
@@ -317,30 +465,174 @@ export default function App() {
     }
   };
 
-  const handleOpenHistory = () => {
+  const handleOpenHistory = useCallback(() => {
     setActiveAnchor('history');
     setIsHistoryOpen(true);
     window.setTimeout(() => {
       const el = document.getElementById('history');
       if (el) el.scrollIntoView({behavior: 'smooth', block: 'start'});
     }, 60);
+  }, []);
+
+  const handleCopyReport = async () => {
+    if (!latestResult) return;
+    try {
+      await navigator.clipboard.writeText(
+        formatResultSummaryText(latestResult, speedUnit),
+      );
+      setCopiedReport(true);
+      window.setTimeout(() => setCopiedReport(false), 2000);
+    } catch {
+      // Clipboard unavailable
+    }
   };
 
+  const handleToggleNotifications = async () => {
+    if (notificationsEnabled) {
+      setNotificationsEnabled(false);
+      return;
+    }
+    if (typeof Notification === 'undefined') return;
+    if (Notification.permission === 'granted') {
+      setNotificationsEnabled(true);
+    } else if (Notification.permission === 'default') {
+      const permission = await Notification.requestPermission();
+      if (permission === 'granted') {
+        setNotificationsEnabled(true);
+      }
+    }
+  };
+
+  const runScheduledWatchTest = useCallback(async () => {
+    if (isTesting || !isOnline) return;
+    lastProgressBucketRef.current = 0;
+    const res = await startPrecisionTest({mode: 'precision'});
+    if (!res) return;
+    void pushTestRunToCloud(res);
+    setWatchRunsCount((c) => c + 1);
+
+    if (
+      profile.subscribedDownloadMbps &&
+      profile.subscribedDownloadMbps > 0
+    ) {
+      const minExpectedMbps =
+        (profile.subscribedDownloadMbps * watchThresholdPct) / 100;
+      if (res.downloadMbps < minExpectedMbps) {
+        const msg = `Scheduled watch alert: Measured ${formatSpeedValue(res.downloadMbps, speedUnit)} ${speedUnit} fell below ${watchThresholdPct}% of your plan (${formatSpeedValue(minExpectedMbps, speedUnit)} ${speedUnit}).`;
+        setWatchAlertsCount((c) => c + 1);
+        setWatchAlertMessage(msg);
+        if (
+          notificationsEnabled &&
+          typeof Notification !== 'undefined' &&
+          Notification.permission === 'granted'
+        ) {
+          try {
+            new Notification('Veloxis Speed Drop Alert', {body: msg});
+          } catch {
+            // Ignore notification errors in restricted environments
+          }
+        }
+      }
+    }
+  }, [
+    isOnline,
+    isTesting,
+    notificationsEnabled,
+    profile.subscribedDownloadMbps,
+    pushTestRunToCloud,
+    speedUnit,
+    startPrecisionTest,
+    watchThresholdPct,
+  ]);
+
+  const runWatchRef = useRef(runScheduledWatchTest);
+  runWatchRef.current = runScheduledWatchTest;
+
+  useEffect(() => {
+    if (watchIntervalMin <= 0) {
+      setWatchCountdownSec(null);
+      return;
+    }
+    const intervalSec = watchIntervalMin * 60;
+    setWatchCountdownSec(intervalSec);
+
+    const timer = window.setInterval(() => {
+      setWatchCountdownSec((prev) => {
+        const current = prev === null ? intervalSec : prev;
+        if (current <= 1) {
+          void runWatchRef.current();
+          return intervalSec;
+        }
+        return current - 1;
+      });
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [watchIntervalMin]);
+
+  useKeyboardShortcuts({
+    disabled: isModalOpen || isTransferAlertOpen,
+    onToggleTest: () => {
+      if (phase === 'ping' || phase === 'download' || phase === 'upload') {
+        handleCancelTest();
+      } else if (consoleMode === 'realtime') {
+        if (isMonitoring) {
+          stopRealtimeMonitor();
+        } else {
+          startRealtimeMonitor();
+        }
+      } else {
+        void handleTriggerStart();
+      }
+    },
+    onToggleUnit: () =>
+      setSpeedUnit((prev) => (prev === 'Mbps' ? 'MBps' : 'Mbps')),
+    onToggleMute: toggleMute,
+    onOpenHistory: handleOpenHistory,
+    onToggleHelp: () => setShowShortcutsHelp((prev) => !prev),
+  });
+
+  const liveAnnouncement =
+    phase === 'ping'
+      ? 'Measuring network ping and jitter.'
+      : phase === 'download'
+        ? 'Measuring download throughput.'
+        : phase === 'upload'
+          ? 'Measuring upload throughput.'
+          : phase === 'complete' && latestResult
+            ? `Speed test complete. Download ${formatSpeedValue(latestResult.downloadMbps, speedUnit)} ${speedUnit}, Upload ${formatSpeedValue(latestResult.uploadMbps, speedUnit)} ${speedUnit}, Veloxis Score ${latestResult.veloxisScore} out of 100.`
+            : '';
+
   return (
-    <MotionConfig reducedMotion="user">
-      <div
-        id="top"
-        className="min-h-screen flex flex-col bg-[#F8FAFC] dark:bg-[#0B1120] text-slate-900 dark:text-slate-100 transition-colors duration-200"
-      >
-        {/* Desktop Top Navbar + Mobile Bottom Navbar */}
-        <AppNav
-          activeAnchor={activeAnchor}
-          onSelectAnchor={setActiveAnchor}
-          historyCount={history.length}
-          onOpenHistory={handleOpenHistory}
-          onOpenDistribution={() => setIsModalOpen(true)}
-          isInstalled={isInstalled}
-        />
+    <ErrorBoundary>
+      <MotionConfig reducedMotion="user">
+        <div
+          id="top"
+          className="min-h-screen flex flex-col bg-[#F8FAFC] dark:bg-[#0B1120] text-slate-900 dark:text-slate-100 transition-colors duration-200"
+        >
+          <a
+            href="#console"
+            className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-lg focus:bg-blue-600 focus:px-3 focus:py-2 focus:text-xs focus:font-semibold focus:text-white"
+          >
+            Skip to speed test console
+          </a>
+          <div className="sr-only" aria-live="polite" aria-atomic="true">
+            {liveAnnouncement}
+          </div>
+
+          {/* Desktop Top Navbar + Mobile Bottom Navbar */}
+          <AppNav
+            activeAnchor={activeAnchor}
+            onSelectAnchor={setActiveAnchor}
+            historyCount={history.length}
+            onOpenHistory={handleOpenHistory}
+            onOpenDistribution={() => setIsModalOpen(true)}
+            isInstalled={isInstalled}
+            cloudUser={cloudUser}
+            authLoading={authLoading}
+            onSignIn={() => void signInWithGoogle()}
+            onSignOut={() => void signOutUser()}
+          />
 
         <div className="flex min-w-0 flex-1 flex-col">
           <AnimatePresence>
@@ -382,11 +674,11 @@ export default function App() {
                     </>
                   )}
                   <span aria-hidden="true">·</span>
-                  <span>{networkInfo.serverNode}</span>
+                  <span>{effectiveNode?.label ?? networkInfo.serverNode}</span>
                   <span aria-hidden="true">·</span>
                   <span className="font-mono tabular-nums">
-                    {Math.max(1, detectedDevices.length)}{' '}
-                    {detectedDevices.length === 1 ? 'device detected' : 'devices detected'}
+                    {Math.max(1, mergedDevices.length)}{' '}
+                    {mergedDevices.length === 1 ? 'device detected' : 'devices detected'}
                   </span>
                 </div>
               </div>
@@ -476,8 +768,28 @@ export default function App() {
               </div>
             </div>
 
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <EdgeNodeSelector
+                nodes={edgeNodes}
+                selectedNodeId={selectedNodeId}
+                effectiveNode={effectiveNode}
+                isProbing={isProbingNodes}
+                disabled={isTesting}
+                onSelectNode={setSelectedNodeId}
+                onReprobe={() => void probeEdgeNodes()}
+              />
+              {cloudUser && (
+                <div className="text-xs text-slate-500 dark:text-slate-400">
+                  Cloud Sync active as{' '}
+                  <span className="font-medium text-slate-700 dark:text-slate-200">
+                    {cloudUser.displayName || cloudUser.email}
+                  </span>
+                </div>
+              )}
+            </div>
+
             <AnimatePresence>
-              {errorMessage && (
+              {(errorMessage || authError) && (
                 <motion.div
                   initial={{opacity: 0, y: -6}}
                   animate={{opacity: 1, y: 0}}
@@ -485,7 +797,7 @@ export default function App() {
                   transition={{duration: 0.2}}
                   className="rounded-xl border border-rose-200 dark:border-rose-900/70 bg-rose-50 dark:bg-rose-950/50 px-4 py-3 text-xs font-medium text-rose-800 dark:text-rose-300"
                 >
-                  {errorMessage}
+                  {errorMessage || authError}
                 </motion.div>
               )}
             </AnimatePresence>
@@ -920,29 +1232,58 @@ export default function App() {
                             )}
                           </div>
                         </div>
-                        <div className="flex items-baseline gap-2 leading-none">
-                          <AnimatedNumber
-                            value={displayedScore}
-                            decimals={0}
-                            className="font-mono text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-50 tabular-nums"
-                          />
-                          <span className="font-mono text-xs tracking-wider text-slate-400 dark:text-slate-500">
-                            / 100
-                          </span>
-                          {scoreMeta && (
-                            <span
-                              className={`ml-1.5 text-xs font-semibold tracking-[0.01em] ${
-                                scoreMeta.tone === 'emerald'
-                                  ? 'text-emerald-700 dark:text-emerald-400'
-                                  : scoreMeta.tone === 'blue'
-                                    ? 'text-blue-700 dark:text-blue-400'
-                                    : scoreMeta.tone === 'amber'
-                                      ? 'text-amber-700 dark:text-amber-400'
-                                      : 'text-rose-700 dark:text-rose-400'
-                              }`}
-                            >
-                              · {scoreMeta.label}
+                        <div className="flex flex-wrap items-center gap-4">
+                          <div className="flex items-baseline gap-2 leading-none">
+                            <AnimatedNumber
+                              value={displayedScore}
+                              decimals={0}
+                              className="font-mono text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-50 tabular-nums"
+                            />
+                            <span className="font-mono text-xs tracking-wider text-slate-400 dark:text-slate-500">
+                              / 100
                             </span>
+                            {scoreMeta && (
+                              <span
+                                className={`ml-1.5 text-xs font-semibold tracking-[0.01em] ${
+                                  scoreMeta.tone === 'emerald'
+                                    ? 'text-emerald-700 dark:text-emerald-400'
+                                    : scoreMeta.tone === 'blue'
+                                      ? 'text-blue-700 dark:text-blue-400'
+                                      : scoreMeta.tone === 'amber'
+                                        ? 'text-amber-700 dark:text-amber-400'
+                                        : 'text-rose-700 dark:text-rose-400'
+                                }`}
+                              >
+                                · {scoreMeta.label}
+                              </span>
+                            )}
+                          </div>
+
+                          {latestResult && !isTesting && (
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void handleCopyReport()}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer whitespace-nowrap"
+                              >
+                                {copiedReport ? (
+                                  <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+                                ) : (
+                                  <Copy className="h-3.5 w-3.5 text-slate-500 dark:text-slate-400" aria-hidden="true" />
+                                )}
+                                <span>{copiedReport ? 'Copied' : 'Copy Summary'}</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  downloadResultReportPng(latestResult, speedUnit, isDark)
+                                }
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer whitespace-nowrap"
+                              >
+                                <Download className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+                                <span>Download PNG</span>
+                              </button>
+                            </div>
                           )}
                         </div>
                       </motion.div>
@@ -1110,13 +1451,15 @@ export default function App() {
               )}
             </AnimatePresence>
 
-            {/* Streaming, Gaming & Browsing Verdicts */}
+            {/* Streaming, Gaming, Bufferbloat & DNS Verdicts */}
             <div id="diagnostics" className="scroll-mt-20">
               <ActivityDiagnostics
                 activities={latestResult?.activities ?? null}
                 isTesting={isTesting}
                 speedUnit={speedUnit}
                 measuredUploadMbps={displayedUl}
+                unloadedPingMs={displayedPing}
+                loadedPingMs={displayedLoadedPing}
               />
             </div>
 
@@ -1125,6 +1468,23 @@ export default function App() {
               placement="post-test-card"
               isTesting={isTesting}
               measuredDownloadMbps={displayedDl}
+            />
+
+            {/* Scheduled / Background Reliability Watch */}
+            <ReliabilityWatchCard
+              intervalMin={watchIntervalMin}
+              thresholdPct={watchThresholdPct}
+              subscribedDownloadMbps={profile.subscribedDownloadMbps}
+              speedUnit={speedUnit}
+              countdownSec={watchCountdownSec}
+              runsCount={watchRunsCount}
+              alertsCount={watchAlertsCount}
+              lastAlertMessage={watchAlertMessage}
+              notificationsEnabled={notificationsEnabled}
+              onChangeInterval={setWatchIntervalMin}
+              onChangeThresholdPct={setWatchThresholdPct}
+              onToggleNotifications={() => void handleToggleNotifications()}
+              onDismissAlert={() => setWatchAlertMessage(null)}
             />
 
             {/* Connected Devices & ISP Plan Benchmark (directly on main view, no separate nav) */}
@@ -1137,7 +1497,7 @@ export default function App() {
                 speedUnit={speedUnit}
                 networkInfo={networkInfo}
                 regionalIsps={regionalIsps}
-                detectedDevices={detectedDevices}
+                detectedDevices={mergedDevices}
                 onRefreshNetwork={refreshNetworkInfo}
                 onRequestFileTest={() => setIsTransferAlertOpen(true)}
               />
@@ -1155,13 +1515,17 @@ export default function App() {
               <HistoryView
                 history={history}
                 speedUnit={speedUnit}
+                isDark={isDark}
                 isExpanded={isHistoryOpen}
                 onToggleExpanded={() => setIsHistoryOpen((prev) => !prev)}
-                onClearHistory={clearHistory}
+                onClearHistory={() => {
+                  clearHistory();
+                  broadcastHistoryCleared();
+                }}
                 onRunNewTest={() => {
                   const el = document.getElementById('console');
                   if (el) el.scrollIntoView({behavior: 'smooth', block: 'start'});
-                  handleTriggerStart();
+                  void handleTriggerStart();
                 }}
               />
             </div>
@@ -1175,6 +1539,51 @@ export default function App() {
                 measuredDownloadMbps={displayedDl}
               />
 
+              <AnimatePresence>
+                {showShortcutsHelp && (
+                  <motion.div
+                    initial={{opacity: 0, y: 4}}
+                    animate={{opacity: 1, y: 0}}
+                    exit={{opacity: 0, y: 4}}
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/70 px-4 py-2.5 text-xs text-slate-600 dark:text-slate-300"
+                  >
+                    <div className="flex flex-wrap items-center gap-4">
+                      <span>
+                        <kbd className="rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-1.5 py-0.5 font-mono text-[11px] font-semibold">
+                          Space
+                        </kbd>{' '}
+                        Start / Cancel
+                      </span>
+                      <span>
+                        <kbd className="rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-1.5 py-0.5 font-mono text-[11px] font-semibold">
+                          U
+                        </kbd>{' '}
+                        Toggle Mbps / MBps
+                      </span>
+                      <span>
+                        <kbd className="rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-1.5 py-0.5 font-mono text-[11px] font-semibold">
+                          M
+                        </kbd>{' '}
+                        Mute / Unmute
+                      </span>
+                      <span>
+                        <kbd className="rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-1.5 py-0.5 font-mono text-[11px] font-semibold">
+                          H
+                        </kbd>{' '}
+                        Jump to History
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowShortcutsHelp(false)}
+                      className="text-[11px] font-semibold text-slate-500 hover:text-slate-900 dark:hover:text-slate-100 cursor-pointer"
+                    >
+                      Close
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
               <div className="flex flex-wrap items-center justify-between gap-4 border-t border-slate-100 dark:border-slate-800/80 pt-4 text-xs text-slate-500 dark:text-slate-400">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-semibold text-slate-700 dark:text-slate-200">Veloxis</span>
@@ -1182,6 +1591,17 @@ export default function App() {
                   <span>Precision Internet Speed &amp; Connection Telemetry</span>
                   <span aria-hidden="true">·</span>
                   <span>© {new Date().getFullYear()} Veloxis</span>
+                  <span className="hidden md:inline text-slate-300 dark:text-slate-700" aria-hidden="true">
+                    ·
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowShortcutsHelp((v) => !v)}
+                    className="hidden md:inline-flex items-center gap-1 text-[11px] text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 cursor-pointer"
+                  >
+                    <Keyboard className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>Shortcuts: Space · U · M · H (?)</span>
+                  </button>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-4">
@@ -1223,12 +1643,15 @@ export default function App() {
           speedUnit={speedUnit}
           onChangeProfile={setProfile}
           onClose={() => setIsTransferAlertOpen(false)}
-          onConfirmFileTest={handleConfirmFileTest}
-          onSwitchToQuickTest={() => {
+          onConfirmFileTest={(dl, ul) => void handleConfirmFileTest(dl, ul)}
+          onSwitchToQuickTest={async () => {
             setConsoleMode('precision');
             lastProgressBucketRef.current = 0;
             playStart();
-            startPrecisionTest({mode: 'precision'});
+            const res = await startPrecisionTest({mode: 'precision'});
+            if (res) {
+              void pushTestRunToCloud(res);
+            }
           }}
         />
 
@@ -1243,5 +1666,6 @@ export default function App() {
         />
       </div>
     </MotionConfig>
+    </ErrorBoundary>
   );
 }

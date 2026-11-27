@@ -10,6 +10,7 @@ import {
 import {AnimatePresence, motion} from 'motion/react';
 import type {SpeedTestResult, SpeedUnit} from '../types/speedtest';
 import {
+  evaluateBufferbloat,
   exportHistoryCSV,
   formatDuration,
   formatSpeedValue,
@@ -21,6 +22,7 @@ import {HistoryComparison} from './HistoryComparison';
 interface HistoryViewProps {
   history: SpeedTestResult[];
   speedUnit: SpeedUnit;
+  isDark?: boolean;
   isExpanded: boolean;
   onToggleExpanded: () => void;
   onClearHistory: () => void;
@@ -30,6 +32,7 @@ interface HistoryViewProps {
 export const HistoryView: React.FC<HistoryViewProps> = ({
   history,
   speedUnit,
+  isDark = false,
   isExpanded,
   onToggleExpanded,
   onClearHistory,
@@ -223,6 +226,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                     runAId={runAId}
                     runBId={runBId}
                     speedUnit={speedUnit}
+                    isDark={isDark}
                     onChangeRunA={setRunAId}
                     onChangeRunB={setRunBId}
                     onSwapRuns={() => {
@@ -340,6 +344,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                       <th className="px-4 py-2.5 text-right font-medium">Download</th>
                       <th className="px-4 py-2.5 text-right font-medium">Upload</th>
                       <th className="px-4 py-2.5 text-right font-medium">Ping</th>
+                      <th className="px-4 py-2.5 text-right font-medium">Bloat</th>
                       <th className="px-4 py-2.5 text-right font-medium">Jitter</th>
                       <th className="px-4 py-2.5 text-right font-medium">Time Taken</th>
                       <th className="px-6 py-2.5 text-right font-medium sm:px-8">Score</th>
@@ -432,6 +437,10 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                           </td>
                           <td className="px-4 py-2.5 text-right font-mono text-slate-700 dark:text-slate-300 tabular-nums whitespace-nowrap">
                             {item.pingMs.toFixed(0)} ms
+                          </td>
+                          <td className="px-4 py-2.5 text-right font-mono font-semibold text-slate-700 dark:text-slate-300 tabular-nums whitespace-nowrap">
+                            {item.bufferbloatGrade ??
+                              evaluateBufferbloat(item.pingMs, item.loadedPingMs).grade}
                           </td>
                           <td className="px-4 py-2.5 text-right font-mono text-slate-700 dark:text-slate-300 tabular-nums whitespace-nowrap">
                             {item.jitterMs.toFixed(1)} ms
