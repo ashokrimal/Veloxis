@@ -21,7 +21,7 @@ export const AnimatedNumber: React.FC<AnimatedNumberProps> = ({
   const currentRef = useRef<number>(value ?? 0);
 
   useEffect(() => {
-    if (value === null) {
+    if (value === null || value === 0) {
       currentRef.current = 0;
       setDisplay(0);
       return;

@@ -5,7 +5,42 @@ import path from 'path';
 import {defineConfig} from 'vite';
 import {VitePWA} from 'vite-plugin-pwa';
 
+const pwaManifest = {
+  id: '/',
+  name: 'Veloxis Speed Test',
+  short_name: 'Veloxis',
+  description:
+    'Precision internet speed test, real-time network telemetry, and ISP plan benchmark.',
+  theme_color: '#FFFFFF',
+  background_color: '#F8FAFC',
+  display: 'standalone' as const,
+  start_url: '/',
+  scope: '/',
+  icons: [
+    {
+      src: '/pwa-192x192.png',
+      sizes: '192x192',
+      type: 'image/png',
+      purpose: 'any',
+    },
+    {
+      src: '/pwa-512x512.png',
+      sizes: '512x512',
+      type: 'image/png',
+      purpose: 'any',
+    },
+    {
+      src: '/pwa-maskable-512x512.png',
+      sizes: '512x512',
+      type: 'image/png',
+      purpose: 'maskable',
+    },
+  ],
+};
+
 export default defineConfig(() => {
+  const isHmrDisabled = process.env.DISABLE_HMR === 'true';
+
   return {
     plugins: [
       react(),
@@ -20,38 +55,7 @@ export default defineConfig(() => {
           'pwa-512x512.png',
           'pwa-maskable-512x512.png',
         ],
-        manifest: {
-          id: '/',
-          name: 'Veloxis Speed Test',
-          short_name: 'Veloxis',
-          description:
-            'Precision internet speed test, real-time network telemetry, and ISP plan benchmark.',
-          theme_color: '#FFFFFF',
-          background_color: '#F8FAFC',
-          display: 'standalone',
-          start_url: '/',
-          scope: '/',
-          icons: [
-            {
-              src: '/pwa-192x192.png',
-              sizes: '192x192',
-              type: 'image/png',
-              purpose: 'any',
-            },
-            {
-              src: '/pwa-512x512.png',
-              sizes: '512x512',
-              type: 'image/png',
-              purpose: 'any',
-            },
-            {
-              src: '/pwa-maskable-512x512.png',
-              sizes: '512x512',
-              type: 'image/png',
-              purpose: 'maskable',
-            },
-          ],
-        },
+        manifest: pwaManifest,
         workbox: {
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           globPatterns: ['**/*.{js,css,html,ico,png,svg,txt,woff,woff2}'],
@@ -92,10 +96,52 @@ export default defineConfig(() => {
           ],
         },
         devOptions: {
-          enabled: true,
+          // vite-plugin-pwa's dev SW hook uses import.meta.hot.send, which throws
+          // SendBeforeConnectError when Vite HMR is disabled via DISABLE_HMR=true.
+          enabled: !isHmrDisabled,
           type: 'module',
         },
       }),
+      ...(isHmrDisabled
+        ? [
+            {
+              name: 'serve-pwa-manifest-no-hmr',
+              apply: 'serve' as const,
+              transformIndexHtml(html: string) {
+                if (html.includes('manifest.webmanifest')) return html;
+                return html.replace(
+                  '</head>',
+                  '    <link rel="manifest" href="/manifest.webmanifest" />\n  </head>',
+                );
+              },
+              configureServer(server: {
+                middlewares: {
+                  use: (
+                    fn: (
+                      req: {url?: string},
+                      res: {
+                        statusCode: number;
+                        setHeader: (k: string, v: string) => void;
+                        end: (body: string) => void;
+                      },
+                      next: () => void,
+                    ) => void,
+                  ) => void;
+                };
+              }) {
+                server.middlewares.use((req, res, next) => {
+                  if (req.url === '/manifest.webmanifest') {
+                    res.statusCode = 200;
+                    res.setHeader('Content-Type', 'application/manifest+json');
+                    res.end(JSON.stringify(pwaManifest, null, 2));
+                    return;
+                  }
+                  next();
+                });
+              },
+            },
+          ]
+        : []),
       // Copies src/assets into dist/ so root-relative URLs like
       // "/src/assets/images/..." (e.g. generate_image output) still resolve
       // in production builds. Do not remove.

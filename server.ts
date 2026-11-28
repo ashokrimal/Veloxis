@@ -219,9 +219,6 @@ function buildExtensionFiles(baseUrl: string): Record<string, string | Buffer> {
       <a href="${baseUrl}" target="_blank" rel="noreferrer" class="btn-secondary">Full Telemetry</a>
     </div>
   </main>
-  <footer class="sponsor">
-    <span>Sponsored · Zero-disruption ad slot</span>
-  </footer>
   <script src="popup.js"></script>
 </body>
 </html>`;
@@ -294,14 +291,6 @@ body {
   font-size: 12px;
   font-weight: 600;
   text-decoration: none;
-}
-.sponsor {
-  padding: 8px 16px;
-  border-top: 1px solid #E2E8F0;
-  background: #FFFFFF;
-  font-size: 11px;
-  color: #64748B;
-  text-align: center;
 }`;
 
   const popupJs = `const BASE_URL = ${JSON.stringify(baseUrl)};
@@ -420,6 +409,8 @@ async function startServer() {
     region: string;
     probeUrl: string | null;
     isPrimary?: boolean;
+    lat?: number;
+    lon?: number;
   }
 
   const EDGE_NODES: EdgeNodeDef[] = [
@@ -435,24 +426,32 @@ async function startServer() {
       label: 'Tokyo Edge (AP-Northeast)',
       region: 'Asia-East',
       probeUrl: 'https://s3.ap-northeast-1.amazonaws.com/ping',
+      lat: 35.6762,
+      lon: 139.6503,
     },
     {
       id: 'asia-south',
       label: 'Singapore Edge (AP-Southeast)',
       region: 'Asia-South',
       probeUrl: 'https://s3.ap-southeast-1.amazonaws.com/ping',
+      lat: 1.3521,
+      lon: 103.8198,
     },
     {
       id: 'us-west',
       label: 'Oregon Edge (US-West)',
       region: 'North America',
       probeUrl: 'https://s3.us-west-2.amazonaws.com/ping',
+      lat: 45.8399,
+      lon: -119.7006,
     },
     {
       id: 'eu-central',
       label: 'Frankfurt Edge (EU-Central)',
       region: 'Europe',
       probeUrl: 'https://s3.eu-central-1.amazonaws.com/ping',
+      lat: 50.1109,
+      lon: 8.6821,
     },
   ];
 
@@ -491,6 +490,8 @@ async function startServer() {
           rttMs: hopMs,
           available: hopMs !== null,
           isPrimary: false,
+          lat: node.lat,
+          lon: node.lon,
         };
       }),
     );
@@ -498,22 +499,60 @@ async function startServer() {
   });
 
   app.get('/api/dns-benchmark/system', async (_req, res) => {
-    const start = process.hrtime.bigint();
-    try {
-      await dns.promises.lookup('example.com', {all: false});
-      const ms = Number(process.hrtime.bigint() - start) / 1e6;
-      res.json({
-        ok: true,
-        resolver: 'System / ISP Resolver',
-        latencyMs: Math.max(1, Number(ms.toFixed(1))),
-      });
-    } catch {
+    const domains = ['example.com', 'iana.org', 'cloudflare.com'];
+    const servers = dns.getServers();
+    const configuredIp = servers.length > 0 ? servers[0] : 'ISP / System';
+    const timings: number[] = [];
+
+    for (const domain of domains) {
+      const resolver = new dns.promises.Resolver();
+      const start = process.hrtime.bigint();
+      try {
+        await resolver.resolve4(domain);
+        const ms = Number(process.hrtime.bigint() - start) / 1e6;
+        timings.push(Math.max(1, Number(ms.toFixed(1))));
+      } catch {
+        // Fallback to OS lookup if custom Resolver fails in restricted sandbox
+        try {
+          const fallbackStart = process.hrtime.bigint();
+          await dns.promises.lookup(domain, {all: false});
+          const ms = Number(process.hrtime.bigint() - fallbackStart) / 1e6;
+          timings.push(Math.max(1, Number(ms.toFixed(1))));
+        } catch {
+          // Ignore individual failed domain probe
+        }
+      }
+    }
+
+    if (timings.length === 0) {
       res.json({
         ok: false,
-        resolver: 'System / ISP Resolver',
+        resolver: 'ISP / System Default',
+        ip: configuredIp,
         latencyMs: null,
+        minMs: null,
+        maxMs: null,
+        sampleCount: 0,
       });
+      return;
     }
+
+    const sorted = [...timings].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    const medianMs =
+      sorted.length % 2 === 0
+        ? Number(((sorted[mid - 1] + sorted[mid]) / 2).toFixed(1))
+        : sorted[mid];
+
+    res.json({
+      ok: true,
+      resolver: 'ISP / System Default',
+      ip: configuredIp,
+      latencyMs: medianMs,
+      minMs: sorted[0],
+      maxMs: sorted[sorted.length - 1],
+      sampleCount: sorted.length,
+    });
   });
 
   app.get('/api/speedtest/ping', async (req, res) => {
@@ -748,6 +787,714 @@ async function startServer() {
     const cleanIp = getClientIp(req).replace(/^::ffff:/, '');
     const peers = Array.from(deviceRegistry.values()).filter((d) => d.ip === cleanIp);
     res.json({devices: peers});
+  });
+
+  type TopologyCategory = 'router' | 'mobile' | 'laptop' | 'landline' | 'tv' | 'other';
+  interface StoredRouterNode {
+    id: string;
+    role: 'primary' | 'secondary';
+    mode:
+      | 'Primary Gateway'
+      | 'Router Mode (Double-NAT)'
+      | 'Access Point (AP) Mode'
+      | 'Bridge Mode'
+      | 'Mesh Node'
+      | 'Unknown';
+    ip: string;
+    mac?: string;
+    vendor?: string;
+    hostname?: string;
+    hopIndex: number;
+    latencyMs?: number | null;
+    subnet?: string;
+  }
+  interface StoredTopologyDevice {
+    id: string;
+    category: TopologyCategory;
+    label: string;
+    ip?: string;
+    mac?: string;
+    vendor?: string;
+    routerRole?: 'primary' | 'secondary' | 'unknown';
+    source: 'lan-probe';
+    lastSeenAt: number;
+  }
+  interface StoredTopologyEntry {
+    token: string;
+    ip: string;
+    routers: StoredRouterNode[];
+    devices: StoredTopologyDevice[];
+    scannedAt: number;
+  }
+
+  const topologyRegistry = new Map<string, StoredTopologyEntry>();
+  const TOPOLOGY_TTL_MS = 30 * 60 * 1000;
+  const ALLOWED_ROUTER_MODES = new Set([
+    'Primary Gateway',
+    'Router Mode (Double-NAT)',
+    'Access Point (AP) Mode',
+    'Bridge Mode',
+    'Mesh Node',
+    'Unknown',
+  ]);
+  const ALLOWED_CATEGORIES = new Set<TopologyCategory>([
+    'router',
+    'mobile',
+    'laptop',
+    'landline',
+    'tv',
+    'other',
+  ]);
+
+  function pruneStaleTopologies(now: number) {
+    for (const [k, entry] of topologyRegistry.entries()) {
+      if (now - entry.scannedAt > TOPOLOGY_TTL_MS) {
+        topologyRegistry.delete(k);
+      }
+    }
+  }
+
+  function sanitizeToken(raw: unknown): string {
+    if (typeof raw !== 'string') return '';
+    const trimmed = raw.trim();
+    return /^[a-zA-Z0-9_-]{8,64}$/.test(trimmed) ? trimmed : '';
+  }
+
+  function mapSessionDeviceCategory(deviceType: string): TopologyCategory {
+    const lower = deviceType.toLowerCase();
+    if (lower === 'mobile' || lower === 'tablet') return 'mobile';
+    if (lower === 'tv') return 'tv';
+    return 'laptop';
+  }
+
+  app.post('/api/topology/ingest', express.json({limit: '256kb'}), (req, res) => {
+    const now = Date.now();
+    pruneStaleTopologies(now);
+    const cleanIp = getClientIp(req).replace(/^::ffff:/, '');
+    const body = (req.body || {}) as {
+      token?: unknown;
+      routers?: unknown[];
+      devices?: unknown[];
+      scannedAt?: unknown;
+    };
+    const token = sanitizeToken(body.token);
+    if (!token) {
+      res.status(400).json({error: 'Valid topology token is required'});
+      return;
+    }
+
+    const rawRouters = Array.isArray(body.routers) ? body.routers.slice(0, 12) : [];
+    const routers: StoredRouterNode[] = rawRouters
+      .map((r, idx): StoredRouterNode | null => {
+        const item = (r || {}) as Record<string, unknown>;
+        const ip = typeof item.ip === 'string' ? item.ip.trim().slice(0, 48) : '';
+        if (!ip) return null;
+        const role: 'primary' | 'secondary' =
+          item.role === 'secondary' ? 'secondary' : 'primary';
+        const modeRaw = typeof item.mode === 'string' ? item.mode.trim() : 'Unknown';
+        const mode = (
+          ALLOWED_ROUTER_MODES.has(modeRaw) ? modeRaw : 'Unknown'
+        ) as StoredRouterNode['mode'];
+        return {
+          id:
+            typeof item.id === 'string' && item.id.trim()
+              ? item.id.trim().slice(0, 64)
+              : `router_${idx}_${ip}`,
+          role,
+          mode,
+          ip,
+          mac: typeof item.mac === 'string' ? item.mac.trim().slice(0, 32) : undefined,
+          vendor: typeof item.vendor === 'string' ? item.vendor.trim().slice(0, 64) : undefined,
+          hostname:
+            typeof item.hostname === 'string' ? item.hostname.trim().slice(0, 80) : undefined,
+          hopIndex: Number.isFinite(Number(item.hopIndex))
+            ? Math.max(1, Math.min(30, Number(item.hopIndex)))
+            : idx + 1,
+          latencyMs:
+            item.latencyMs !== null && Number.isFinite(Number(item.latencyMs))
+              ? Number(Number(item.latencyMs).toFixed(1))
+              : null,
+          subnet: typeof item.subnet === 'string' ? item.subnet.trim().slice(0, 32) : undefined,
+        };
+      })
+      .filter((x): x is StoredRouterNode => x !== null);
+
+    const rawDevices = Array.isArray(body.devices) ? body.devices.slice(0, 256) : [];
+    const devices: StoredTopologyDevice[] = rawDevices
+      .map((d, idx) => {
+        const item = (d || {}) as Record<string, unknown>;
+        const label =
+          typeof item.label === 'string' && item.label.trim()
+            ? item.label.trim().slice(0, 80)
+            : 'Network Device';
+        const catRaw = typeof item.category === 'string' ? item.category.trim().toLowerCase() : 'other';
+        const category = (
+          ALLOWED_CATEGORIES.has(catRaw as TopologyCategory) ? catRaw : 'other'
+        ) as TopologyCategory;
+        const routerRole =
+          item.routerRole === 'primary' || item.routerRole === 'secondary'
+            ? item.routerRole
+            : 'unknown';
+        return {
+          id:
+            typeof item.id === 'string' && item.id.trim()
+              ? item.id.trim().slice(0, 64)
+              : `lan_${idx}_${Date.now()}`,
+          category,
+          label,
+          ip: typeof item.ip === 'string' ? item.ip.trim().slice(0, 48) : undefined,
+          mac: typeof item.mac === 'string' ? item.mac.trim().slice(0, 32) : undefined,
+          vendor: typeof item.vendor === 'string' ? item.vendor.trim().slice(0, 64) : undefined,
+          routerRole,
+          source: 'lan-probe' as const,
+          lastSeenAt: now,
+        };
+      });
+
+    const entry: StoredTopologyEntry = {
+      token,
+      ip: cleanIp,
+      routers,
+      devices,
+      scannedAt: now,
+    };
+    topologyRegistry.set(token, entry);
+    res.json({
+      ok: true,
+      routersCount: routers.length,
+      devicesCount: devices.length,
+      scannedAt: now,
+    });
+  });
+
+  app.get('/api/topology', async (req, res) => {
+    const now = Date.now();
+    pruneStaleDevices(now);
+    pruneStaleTopologies(now);
+
+    const cleanIp = getClientIp(req).replace(/^::ffff:/, '');
+    const token = sanitizeToken(req.query.token);
+    const currentDeviceId =
+      typeof req.query.deviceId === 'string' ? req.query.deviceId.trim().slice(0, 64) : '';
+
+    let matchedEntry: StoredTopologyEntry | undefined = token
+      ? topologyRegistry.get(token)
+      : undefined;
+
+    if (!matchedEntry) {
+      for (const candidate of topologyRegistry.values()) {
+        if (candidate.ip === cleanIp) {
+          if (!matchedEntry || candidate.scannedAt > matchedEntry.scannedAt) {
+            matchedEntry = candidate;
+          }
+        }
+      }
+    }
+
+    const sessionPeers = Array.from(deviceRegistry.values()).filter(
+      (d) => d.ip === cleanIp,
+    );
+
+    const mergedDevices: Array<{
+      id: string;
+      category: TopologyCategory;
+      label: string;
+      ip?: string;
+      mac?: string;
+      vendor?: string;
+      routerRole?: 'primary' | 'secondary' | 'unknown';
+      source: 'lan-probe' | 'veloxis-session';
+      isCurrentDevice?: boolean;
+      rttMs?: number | null;
+      lastSeenAt: number;
+    }> = [];
+
+    if (matchedEntry) {
+      for (const dev of matchedEntry.devices) {
+        mergedDevices.push(dev);
+      }
+    }
+
+    for (const peer of sessionPeers) {
+      const alreadyListed = mergedDevices.some(
+        (d) => d.isCurrentDevice && peer.deviceId === currentDeviceId,
+      );
+      if (!alreadyListed) {
+        mergedDevices.push({
+          id: `session_${peer.deviceId}`,
+          category: mapSessionDeviceCategory(peer.deviceType),
+          label: peer.label,
+          routerRole: matchedEntry?.routers.some((r) => r.role === 'secondary')
+            ? 'secondary'
+            : matchedEntry?.routers.length
+              ? 'primary'
+              : 'unknown',
+          source: 'veloxis-session',
+          isCurrentDevice: peer.deviceId === currentDeviceId,
+          rttMs: peer.rttMs || null,
+          lastSeenAt: peer.lastSeenAt,
+        });
+      }
+    }
+
+    const categoryCounts: Record<TopologyCategory, number> & {total: number} = {
+      router: 0,
+      mobile: 0,
+      laptop: 0,
+      landline: 0,
+      tv: 0,
+      other: 0,
+      total: 0,
+    };
+
+    for (const dev of mergedDevices) {
+      categoryCounts[dev.category] += 1;
+      categoryCounts.total += 1;
+    }
+
+    const netInfo = await lookupNetworkInfo(cleanIp);
+
+    res.json({
+      token: token || matchedEntry?.token || '',
+      publicIp: netInfo.ip || cleanIp,
+      isp: netInfo.isp,
+      asn: netInfo.asn,
+      probeConnected: Boolean(matchedEntry),
+      lastScannedAt: matchedEntry?.scannedAt ?? null,
+      source: matchedEntry ? 'lan-probe' : 'veloxis-sessions',
+      routers: matchedEntry?.routers ?? [],
+      devices: mergedDevices,
+      categoryCounts,
+      notes: matchedEntry
+        ? 'Topology includes real LAN hop & ARP neighbor scan plus active Veloxis sessions.'
+        : 'Showing active Veloxis devices on this ISP connection. Run the local LAN probe to discover primary/secondary routers and non-browser devices (TVs, phones, landline VoIP).',
+    });
+  });
+
+  app.get('/api/lan-agent/script', (req, res) => {
+    const token = sanitizeToken(req.query.token) || 'veloxis_local_probe';
+    const proto = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+    const host =
+      req.headers['x-forwarded-host'] || req.headers.host || `localhost:${PORT}`;
+    const baseUrl =
+      process.env.APP_URL && process.env.APP_URL !== 'MY_APP_URL'
+        ? process.env.APP_URL.replace(/\/$/, '')
+        : `${proto}://${host}`;
+
+    const script = `#!/usr/bin/env node
+// Veloxis Local Network Topology & Router Probe (Pure Node.js, zero dependencies)
+import { exec } from 'node:child_process';
+import http from 'node:http';
+import os from 'node:os';
+import { promisify } from 'node:util';
+
+const execAsync = promisify(exec);
+const BASE_URL = ${JSON.stringify(baseUrl)};
+const TOKEN = ${JSON.stringify(token)};
+const ONCE = process.argv.includes('--once');
+
+const OUI_VENDORS = {
+  // Networking / Routers / APs
+  '00:18:e7': { vendor: 'Cameo / D-Link', cat: 'router' },
+  '00:24:01': { vendor: 'D-Link', cat: 'router' },
+  '14:cc:20': { vendor: 'TP-Link', cat: 'router' },
+  '50:c7:bf': { vendor: 'TP-Link', cat: 'router' },
+  '98:da:c4': { vendor: 'TP-Link', cat: 'router' },
+  'b0:be:76': { vendor: 'TP-Link', cat: 'router' },
+  'c0:06:c3': { vendor: 'TP-Link', cat: 'router' },
+  'e8:94:f6': { vendor: 'TP-Link', cat: 'router' },
+  '18:e8:29': { vendor: 'Ubiquiti UniFi', cat: 'router' },
+  '24:5a:4c': { vendor: 'Ubiquiti', cat: 'router' },
+  '74:83:c2': { vendor: 'Ubiquiti', cat: 'router' },
+  'fc:ec:da': { vendor: 'Ubiquiti', cat: 'router' },
+  '04:d4:c4': { vendor: 'ASUS Router', cat: 'router' },
+  '2c:fd:a1': { vendor: 'ASUS Router', cat: 'router' },
+  'ac:9e:17': { vendor: 'ASUS Router', cat: 'router' },
+  '28:c6:8e': { vendor: 'NETGEAR', cat: 'router' },
+  'a0:04:60': { vendor: 'NETGEAR', cat: 'router' },
+  'c4:04:15': { vendor: 'NETGEAR', cat: 'router' },
+  '4c:5e:0c': { vendor: 'MikroTik', cat: 'router' },
+  'd4:ca:6d': { vendor: 'MikroTik', cat: 'router' },
+  '00:1a:2b': { vendor: 'Ayecom / Router', cat: 'router' },
+  '68:7f:74': { vendor: 'Linksys', cat: 'router' },
+  '34:6b:d3': { vendor: 'Huawei Router', cat: 'router' },
+  '48:46:fb': { vendor: 'Huawei', cat: 'router' },
+  '00:e0:4c': { vendor: 'Realtek / Gateway', cat: 'other' },
+  // Landline / VoIP / SIP Phones
+  '00:04:f2': { vendor: 'Polycom VoIP Phone', cat: 'landline' },
+  '64:16:7f': { vendor: 'Polycom VoIP', cat: 'landline' },
+  '00:15:65': { vendor: 'Yealink SIP Phone', cat: 'landline' },
+  '80:5e:c0': { vendor: 'Yealink VoIP', cat: 'landline' },
+  '00:0b:82': { vendor: 'Grandstream VoIP', cat: 'landline' },
+  'c0:74:ad': { vendor: 'Grandstream SIP', cat: 'landline' },
+  '00:08:5d': { vendor: 'Aastra / Mitel VoIP', cat: 'landline' },
+  '7c:2f:80': { vendor: 'Gigaset DECT Landline', cat: 'landline' },
+  '00:04:13': { vendor: 'Snom VoIP Phone', cat: 'landline' },
+  '00:1b:d4': { vendor: 'Cisco IP Phone', cat: 'landline' },
+  // Smart TVs / Media
+  '00:1e:75': { vendor: 'LG Smart TV', cat: 'tv' },
+  '14:c9:13': { vendor: 'LG webOS TV', cat: 'tv' },
+  '3c:bd:d8': { vendor: 'LG Electronics TV', cat: 'tv' },
+  'cc:2d:83': { vendor: 'LG Electronics', cat: 'tv' },
+  '00:12:fb': { vendor: 'Samsung Smart TV', cat: 'tv' },
+  '50:85:69': { vendor: 'Samsung TV', cat: 'tv' },
+  'cc:6e:a4': { vendor: 'Samsung Smart TV', cat: 'tv' },
+  'f4:7b:5e': { vendor: 'Samsung Electronics', cat: 'tv' },
+  '00:1d:ba': { vendor: 'Sony Bravia TV', cat: 'tv' },
+  'ac:9b:0a': { vendor: 'Sony TV', cat: 'tv' },
+  'b0:ee:7b': { vendor: 'Roku TV / Stick', cat: 'tv' },
+  'dc:3a:5e': { vendor: 'Roku Streaming', cat: 'tv' },
+  '68:54:fd': { vendor: 'Amazon Fire TV', cat: 'tv' },
+  'f0:27:2d': { vendor: 'Amazon Fire TV', cat: 'tv' },
+  // Mobile Phones
+  '00:cd:fe': { vendor: 'Apple iPhone/iPad', cat: 'mobile' },
+  '28:cf:e9': { vendor: 'Apple', cat: 'mobile' },
+  'f0:18:98': { vendor: 'Apple', cat: 'mobile' },
+  '38:ca:da': { vendor: 'Apple iPhone', cat: 'mobile' },
+  '50:32:75': { vendor: 'Apple', cat: 'mobile' },
+  '34:2d:0d': { vendor: 'Samsung Galaxy', cat: 'mobile' },
+  '84:25:db': { vendor: 'Samsung Mobile', cat: 'mobile' },
+  'c4:9a:02': { vendor: 'Xiaomi Mobile', cat: 'mobile' },
+  '64:cc:2e': { vendor: 'Xiaomi', cat: 'mobile' },
+  '98:fa:e3': { vendor: 'Xiaomi', cat: 'mobile' },
+  'f8:a4:5f': { vendor: 'Xiaomi', cat: 'mobile' },
+  'c0:ee:fb': { vendor: 'OnePlus', cat: 'mobile' },
+  '94:65:2d': { vendor: 'OnePlus', cat: 'mobile' },
+  'd8:eb:97': { vendor: 'Google Pixel', cat: 'mobile' },
+  '3c:5a:b4': { vendor: 'Google', cat: 'mobile' },
+  // Laptops / PCs
+  '3c:22:fb': { vendor: 'Apple MacBook', cat: 'laptop' },
+  'ac:de:48': { vendor: 'Apple Mac', cat: 'laptop' },
+  'a4:83:e7': { vendor: 'Apple MacBook', cat: 'laptop' },
+  'd4:be:d9': { vendor: 'Dell Laptop', cat: 'laptop' },
+  'f8:b1:56': { vendor: 'Dell', cat: 'laptop' },
+  '00:21:6a': { vendor: 'Intel Wi-Fi Laptop', cat: 'laptop' },
+  '8c:8d:28': { vendor: 'Intel Wireless', cat: 'laptop' },
+  '54:e1:ad': { vendor: 'Lenovo ThinkPad', cat: 'laptop' },
+  '98:fa:9b': { vendor: 'Lenovo', cat: 'laptop' },
+  'dc:4a:3e': { vendor: 'HP Laptop', cat: 'laptop' },
+  'b4:b5:2f': { vendor: 'Hewlett Packard', cat: 'laptop' },
+};
+
+function normalizeMac(mac) {
+  if (!mac) return '';
+  const parts = mac.toLowerCase().replace(/-/g, ':').split(':').filter(Boolean);
+  if (parts.length !== 6) return '';
+  return parts.map((p) => p.padStart(2, '0')).join(':');
+}
+
+function isPrivateIp(ip) {
+  return (
+    ip.startsWith('10.') ||
+    ip.startsWith('192.168.') ||
+    /^172\\.(1[6-9]|2\\d|3[0-1])\\./.test(ip)
+  );
+}
+
+function isCgnatIp(ip) {
+  return /^100\\.(6[4-9]|[7-9]\\d|1[01]\\d|12[0-7])\\./.test(ip);
+}
+
+function classifyHost({ ip, mac, hostname, isGateway }) {
+  const normMac = normalizeMac(mac);
+  const oui = normMac ? normMac.slice(0, 8) : '';
+  const ouiInfo = OUI_VENDORS[oui];
+  const h = (hostname || '').toLowerCase();
+
+  if (isGateway) {
+    return { category: 'router', vendor: ouiInfo?.vendor || 'Network Gateway' };
+  }
+  if (/iphone|android|galaxy|pixel|redmi|xiaomi|oneplus|oppo|vivo|realme|phone/.test(h) && !/sip|voip|polycom|yealink|cisco/.test(h)) {
+    return { category: 'mobile', vendor: ouiInfo?.vendor || 'Mobile Device' };
+  }
+  if (/bravia|webos|tizen|roku|chromecast|firetv|appletv|smarttv|tv/.test(h)) {
+    return { category: 'tv', vendor: ouiInfo?.vendor || 'Smart TV' };
+  }
+  if (/yealink|polycom|grandstream|cisco-spa|snom|gigaset|voip|sip|ata/.test(h)) {
+    return { category: 'landline', vendor: ouiInfo?.vendor || 'Landline / VoIP Phone' };
+  }
+  if (/macbook|imac|thinkpad|laptop|desktop|pc|ubuntu|fedora|windows/.test(h)) {
+    return { category: 'laptop', vendor: ouiInfo?.vendor || 'Computer' };
+  }
+  if (/router|gateway|ap-|unifi|tplink|openwrt|mikrotik|asus|netgear|eero|orbi|deco/.test(h)) {
+    return { category: 'router', vendor: ouiInfo?.vendor || 'Router / Access Point' };
+  }
+  if (ouiInfo) {
+    return { category: ouiInfo.cat, vendor: ouiInfo.vendor };
+  }
+  return { category: 'other', vendor: 'Connected LAN Host' };
+}
+
+function getLocalIpv4() {
+  const ifaces = os.networkInterfaces();
+  for (const [name, list] of Object.entries(ifaces)) {
+    if (!list) continue;
+    for (const addr of list) {
+      if (addr.family === 'IPv4' && !addr.internal && isPrivateIp(addr.address)) {
+        return { iface: name, ip: addr.address, mac: normalizeMac(addr.mac) };
+      }
+    }
+  }
+  return null;
+}
+
+async function getDefaultGateway() {
+  const platform = os.platform();
+  try {
+    if (platform === 'darwin') {
+      const { stdout } = await execAsync('route -n get default');
+      const m = stdout.match(/gateway:\\s*([\\d.]+)/);
+      if (m) return m[1];
+    } else if (platform === 'win32') {
+      const { stdout } = await execAsync('route print 0.0.0.0');
+      const m = stdout.match(/0\\.0\\.0\\.0\\s+0\\.0\\.0\\.0\\s+([\\d.]+)/);
+      if (m) return m[1];
+    } else {
+      const { stdout } = await execAsync('ip route show default');
+      const m = stdout.match(/default via ([\\d.]+)/);
+      if (m) return m[1];
+    }
+  } catch {}
+  return null;
+}
+
+async function traceFirstHops() {
+  const platform = os.platform();
+  const cmd = platform === 'win32'
+    ? 'tracert -d -h 4 -w 700 1.1.1.1'
+    : 'traceroute -n -m 4 -w 1 -q 1 1.1.1.1';
+  try {
+    const { stdout } = await execAsync(cmd, { timeout: 10000 });
+    const hops = [];
+    for (const line of stdout.split('\\n')) {
+      const hopMatch = line.match(/^\\s*(\\d+)\\s+(.+)$/);
+      if (!hopMatch) continue;
+      const hopIndex = Number(hopMatch[1]);
+      const ipMatch = hopMatch[2].match(/(\\d{1,3}(?:\\.\\d{1,3}){3})/);
+      const msMatch = hopMatch[2].match(/([\\d.]+)\\s*ms/);
+      if (ipMatch) {
+        hops.push({
+          hopIndex,
+          ip: ipMatch[1],
+          latencyMs: msMatch ? Number(msMatch[1]) : null,
+        });
+      }
+    }
+    return hops;
+  } catch {
+    return [];
+  }
+}
+
+async function pingSweepSubnet(localIp) {
+  if (!localIp) return;
+  const prefix = localIp.split('.').slice(0, 3).join('.');
+  const isWin = os.platform() === 'win32';
+  const batchSize = 24;
+  for (let start = 1; start <= 254; start += batchSize) {
+    const tasks = [];
+    for (let i = start; i < Math.min(255, start + batchSize); i++) {
+      const target = prefix + '.' + i;
+      const cmd = isWin ? 'ping -n 1 -w 220 ' + target : 'ping -c 1 -W 1 ' + target;
+      tasks.push(execAsync(cmd, { timeout: 1200 }).catch(() => {}));
+    }
+    await Promise.all(tasks);
+  }
+}
+
+async function readArpTable() {
+  const entries = [];
+  const seen = new Set();
+  try {
+    const cmd = os.platform() === 'linux' ? 'ip neigh show || arp -a' : 'arp -a';
+    const { stdout } = await execAsync(cmd, { timeout: 4000 });
+    for (const line of stdout.split('\\n')) {
+      const ipMatch = line.match(/(\\d{1,3}(?:\\.\\d{1,3}){3})/);
+      const macMatch = line.match(/([0-9a-fA-F]{1,2}[:-]){5}[0-9a-fA-F]{1,2}/);
+      if (!ipMatch || !macMatch) continue;
+      const ip = ipMatch[1];
+      const mac = normalizeMac(macMatch[0]);
+      if (!mac || mac === 'ff:ff:ff:ff:ff:ff' || ip.endsWith('.255') || ip.startsWith('224.') || ip.startsWith('239.')) continue;
+      if (seen.has(ip)) continue;
+      seen.add(ip);
+      const hostMatch = line.match(/^([^\\s?(]+)\\s+\\(/);
+      const hostname = hostMatch && hostMatch[1] !== '?' ? hostMatch[1] : '';
+      entries.push({ ip, mac, hostname });
+    }
+  } catch {}
+  return entries;
+}
+
+async function runNetworkScan() {
+  const local = getLocalIpv4();
+  const gatewayIp = await getDefaultGateway();
+  const [hops] = await Promise.all([
+    traceFirstHops(),
+    pingSweepSubnet(local?.ip),
+  ]);
+  const arpEntries = await readArpTable();
+
+  const privateHops = hops.filter((h) => isPrivateIp(h.ip));
+  const routers = [];
+  const hasDoubleNat = privateHops.length >= 2 && privateHops[0].ip !== privateHops[1].ip;
+
+  if (hasDoubleNat) {
+    const secHop = privateHops[0];
+    const priHop = privateHops[1];
+    const secArp = arpEntries.find((a) => a.ip === secHop.ip);
+    routers.push({
+      id: 'sec_' + secHop.ip,
+      role: 'secondary',
+      mode: 'Router Mode (Double-NAT)',
+      ip: secHop.ip,
+      mac: secArp?.mac,
+      vendor: secArp ? classifyHost({ ...secArp, isGateway: true }).vendor : 'Secondary Router',
+      hostname: secArp?.hostname,
+      hopIndex: secHop.hopIndex,
+      latencyMs: secHop.latencyMs,
+      subnet: secHop.ip.split('.').slice(0, 3).join('.') + '.0/24',
+    });
+    routers.push({
+      id: 'pri_' + priHop.ip,
+      role: 'primary',
+      mode: 'Primary Gateway',
+      ip: priHop.ip,
+      hopIndex: priHop.hopIndex,
+      latencyMs: priHop.latencyMs,
+      subnet: priHop.ip.split('.').slice(0, 3).join('.') + '.0/24',
+    });
+  } else {
+    const priIp = privateHops[0]?.ip || gatewayIp;
+    if (priIp) {
+      const priArp = arpEntries.find((a) => a.ip === priIp);
+      routers.push({
+        id: 'pri_' + priIp,
+        role: 'primary',
+        mode: 'Primary Gateway',
+        ip: priIp,
+        mac: priArp?.mac,
+        vendor: priArp ? classifyHost({ ...priArp, isGateway: true }).vendor : 'Primary Router',
+        hostname: priArp?.hostname,
+        hopIndex: privateHops[0]?.hopIndex || 1,
+        latencyMs: privateHops[0]?.latencyMs ?? null,
+        subnet: priIp.split('.').slice(0, 3).join('.') + '.0/24',
+      });
+    }
+    // Check ARP table for additional routers / Access Points running in AP or Bridge mode on the same subnet
+    for (const entry of arpEntries) {
+      if (entry.ip === priIp) continue;
+      const cls = classifyHost({ ...entry, isGateway: false });
+      if (cls.category === 'router') {
+        routers.push({
+          id: 'ap_' + entry.ip,
+          role: 'secondary',
+          mode: 'Access Point (AP) Mode',
+          ip: entry.ip,
+          mac: entry.mac,
+          vendor: cls.vendor,
+          hostname: entry.hostname,
+          hopIndex: 1,
+          latencyMs: null,
+          subnet: entry.ip.split('.').slice(0, 3).join('.') + '.0/24',
+        });
+      }
+    }
+  }
+
+  const devices = [];
+  if (local) {
+    const selfCat = os.platform() === 'android' || os.platform() === 'ios' ? 'mobile' : 'laptop';
+    devices.push({
+      id: 'self_' + local.ip,
+      category: selfCat,
+      label: os.hostname() + ' (This Machine)',
+      ip: local.ip,
+      mac: local.mac,
+      vendor: os.type() + ' ' + os.arch(),
+      routerRole: hasDoubleNat ? 'secondary' : 'primary',
+    });
+  }
+
+  for (const entry of arpEntries) {
+    if (local && entry.ip === local.ip) continue;
+    const isGw = routers.some((r) => r.ip === entry.ip);
+    const cls = classifyHost({ ...entry, isGateway: isGw });
+    devices.push({
+      id: 'lan_' + entry.ip + '_' + entry.mac,
+      category: cls.category,
+      label: entry.hostname || cls.vendor + ' (' + entry.ip + ')',
+      ip: entry.ip,
+      mac: entry.mac,
+      vendor: cls.vendor,
+      routerRole: hasDoubleNat ? 'secondary' : 'primary',
+    });
+  }
+
+  const payload = {
+    token: TOKEN,
+    routers,
+    devices,
+    scannedAt: Date.now(),
+  };
+
+  const res = await fetch(BASE_URL + '/api/topology/ingest', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    throw new Error('Failed to post topology (' + res.status + ')');
+  }
+  return payload;
+}
+
+const initial = await runNetworkScan();
+console.log(
+  '[Veloxis LAN Probe] Uploaded',
+  initial.routers.length,
+  'router(s) and',
+  initial.devices.length,
+  'device(s) to',
+  BASE_URL
+);
+
+if (!ONCE) {
+  const srv = http.createServer(async (req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+    if (req.url?.startsWith('/scan')) {
+      try {
+        const result = await runNetworkScan();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, token: TOKEN }));
+  });
+  srv.listen(47820, '127.0.0.1', () => {
+    console.log('[Veloxis LAN Probe] Live local agent listening on http://127.0.0.1:47820 (Ctrl+C to stop)');
+  });
+}
+`;
+
+    res.type('application/javascript; charset=utf-8');
+    if (req.query.download === '1') {
+      res.setHeader(
+        'Content-Disposition',
+        'attachment; filename="veloxis-lan-probe.mjs"',
+      );
+    }
+    res.send(script);
   });
 
   app.get('/api/extension/download', async (req, res) => {

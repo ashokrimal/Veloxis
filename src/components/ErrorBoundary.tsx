@@ -28,10 +28,10 @@ export class ErrorBoundary extends React.Component<
   override render() {
     if (this.state.hasError) {
       return (
-        <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC] dark:bg-[#0B1120] p-6 text-slate-900 dark:text-slate-100">
-          <div className="max-w-md w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] p-6 shadow-sm">
+        <div className="min-h-screen flex items-center justify-center bg-[#F3F1EC] dark:bg-[#060913] p-6 text-stone-900 dark:text-slate-100">
+          <div className="max-w-md w-full rounded-xl bg-white dark:bg-[#0D1322] p-6 vx-card">
             <h2 className="text-base font-bold">Something went wrong</h2>
-            <p className="mt-2 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
+            <p className="mt-2 text-xs leading-relaxed text-stone-600 dark:text-slate-300">
               {this.state.message.startsWith('{')
                 ? 'A cloud sync permission or configuration issue occurred. Your local speed test telemetry remains safe.'
                 : this.state.message}
@@ -39,7 +39,7 @@ export class ErrorBoundary extends React.Component<
             <button
               type="button"
               onClick={() => window.location.reload()}
-              className="mt-4 rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-700 cursor-pointer"
+              className="mt-4 rounded-lg bg-[#1D4ED8] hover:bg-[#1E40AF] dark:bg-[#0EA5E9] dark:hover:bg-[#38BDF8] px-4 py-2 text-xs font-semibold text-white dark:text-slate-950 vx-btn-primary cursor-pointer"
             >
               Reload Veloxis
             </button>

@@ -8,13 +8,21 @@ import {
   useTransform,
 } from 'motion/react';
 import type {SpeedUnit, TestPhase, TransferProgress} from '../types/speedtest';
-import {convertSpeed, formatDuration, formatTransferSize} from '../utils/scoring';
+import {
+  convertSpeed,
+  formatDuration,
+  formatTransferSize,
+  speedToNormalized,
+} from '../utils/scoring';
 import {AnimatedNumber} from './AnimatedNumber';
 
 interface PrecisionGaugeProps {
   phase: TestPhase;
   progressPct: number;
   liveSpeedMbps: number;
+  speedCaption?: string;
+  downloadProgress?: number;
+  uploadProgress?: number;
   speedUnit: SpeedUnit;
   transferProgress?: TransferProgress | null;
   elapsedSeconds?: number;
@@ -25,14 +33,6 @@ interface PrecisionGaugeProps {
   onStart: () => void;
   onCancel: () => void;
   actionLabel?: string;
-}
-
-const SCALE_MAX = 1000;
-
-function speedToNormalized(mbps: number): number {
-  if (mbps <= 0) return 0;
-  const clamped = Math.min(SCALE_MAX, Math.max(0, mbps));
-  return Math.min(1, Math.log10(clamped + 1) / Math.log10(SCALE_MAX + 1));
 }
 
 function getPhaseLabel(
@@ -65,6 +65,9 @@ export const PrecisionGauge: React.FC<PrecisionGaugeProps> = ({
   phase,
   progressPct,
   liveSpeedMbps,
+  speedCaption,
+  downloadProgress,
+  uploadProgress,
   speedUnit,
   transferProgress = null,
   elapsedSeconds = 0,
@@ -77,8 +80,27 @@ export const PrecisionGauge: React.FC<PrecisionGaugeProps> = ({
   actionLabel,
 }) => {
   const isRunning = phase === 'ping' || phase === 'download' || phase === 'upload';
-  const normalized = speedToNormalized(liveSpeedMbps);
+  const isLiveArcActive = isRunning || phase === 'monitoring';
+  const normalized = isLiveArcActive ? speedToNormalized(liveSpeedMbps) : 0;
   const displayedValue = convertSpeed(liveSpeedMbps, speedUnit);
+
+  const computedDlProgress =
+    typeof downloadProgress === 'number'
+      ? Math.max(0, Math.min(1, downloadProgress))
+      : phase === 'download'
+        ? normalized
+        : phase === 'upload' || phase === 'complete'
+          ? 1
+          : 0;
+
+  const computedUlProgress =
+    typeof uploadProgress === 'number'
+      ? Math.max(0, Math.min(1, uploadProgress))
+      : phase === 'upload'
+        ? normalized
+        : phase === 'complete'
+          ? 1
+          : 0;
 
   const rawNormalized = useMotionValue(normalized);
   const smoothNormalized = useSpring(rawNormalized, {
@@ -87,8 +109,15 @@ export const PrecisionGauge: React.FC<PrecisionGaugeProps> = ({
     mass: 0.7,
   });
 
-  const rawProgress = useMotionValue(isRunning ? progressPct / 100 : phase === 'complete' ? 1 : 0);
-  const smoothProgress = useSpring(rawProgress, {
+  const rawDlProgress = useMotionValue(computedDlProgress);
+  const smoothDlProgress = useSpring(rawDlProgress, {
+    stiffness: 120,
+    damping: 24,
+    mass: 0.6,
+  });
+
+  const rawUlProgress = useMotionValue(computedUlProgress);
+  const smoothUlProgress = useSpring(rawUlProgress, {
     stiffness: 120,
     damping: 24,
     mass: 0.6,
@@ -99,18 +128,18 @@ export const PrecisionGauge: React.FC<PrecisionGaugeProps> = ({
   }, [normalized, rawNormalized]);
 
   useEffect(() => {
-    const target = isRunning
-      ? Math.max(0.02, progressPct / 100)
-      : phase === 'complete'
-        ? 1
-        : 0;
-    rawProgress.set(target);
-  }, [isRunning, phase, progressPct, rawProgress]);
+    rawDlProgress.set(computedDlProgress);
+  }, [computedDlProgress, rawDlProgress]);
+
+  useEffect(() => {
+    rawUlProgress.set(computedUlProgress);
+  }, [computedUlProgress, rawUlProgress]);
 
   const cx = 160;
   const cy = 148;
-  const radius = 116;
-  const progressRadius = 128;
+  const radius = 114;
+  const dlRingRadius = 128;
+  const ulRingRadius = 136;
   const startAngle = (150 * Math.PI) / 180;
   const totalSweep = (240 * Math.PI) / 180;
 
@@ -123,9 +152,13 @@ export const PrecisionGauge: React.FC<PrecisionGaugeProps> = ({
   const endPt = arcPoint(startAngle + totalSweep);
   const fullTrackPath = `M ${startPt.x.toFixed(2)} ${startPt.y.toFixed(2)} A ${radius} ${radius} 0 1 1 ${endPt.x.toFixed(2)} ${endPt.y.toFixed(2)}`;
 
-  const pStartPt = arcPoint(startAngle, progressRadius);
-  const pEndPt = arcPoint(startAngle + totalSweep, progressRadius);
-  const outerProgressTrackPath = `M ${pStartPt.x.toFixed(2)} ${pStartPt.y.toFixed(2)} A ${progressRadius} ${progressRadius} 0 1 1 ${pEndPt.x.toFixed(2)} ${pEndPt.y.toFixed(2)}`;
+  const dlStartPt = arcPoint(startAngle, dlRingRadius);
+  const dlEndPt = arcPoint(startAngle + totalSweep, dlRingRadius);
+  const dlTrackPath = `M ${dlStartPt.x.toFixed(2)} ${dlStartPt.y.toFixed(2)} A ${dlRingRadius} ${dlRingRadius} 0 1 1 ${dlEndPt.x.toFixed(2)} ${dlEndPt.y.toFixed(2)}`;
+
+  const ulStartPt = arcPoint(startAngle, ulRingRadius);
+  const ulEndPt = arcPoint(startAngle + totalSweep, ulRingRadius);
+  const ulTrackPath = `M ${ulStartPt.x.toFixed(2)} ${ulStartPt.y.toFixed(2)} A ${ulRingRadius} ${ulRingRadius} 0 1 1 ${ulEndPt.x.toFixed(2)} ${ulEndPt.y.toFixed(2)}`;
 
   const needleX = useTransform(smoothNormalized, (n) => {
     const ang = startAngle + totalSweep * n;
@@ -137,14 +170,9 @@ export const PrecisionGauge: React.FC<PrecisionGaugeProps> = ({
   });
   const needleOpacity = useTransform(smoothNormalized, (n) => (n > 0.004 ? 1 : 0));
 
-  const accentStroke =
-    phase === 'upload'
-      ? isDark
-        ? '#22D3EE'
-        : '#0891B2'
-      : isDark
-        ? '#3B82F6'
-        : '#2563EB';
+  const downloadStroke = isDark ? '#38BDF8' : '#1D4ED8';
+  const uploadStroke = isDark ? '#A3E635' : '#65A30D';
+  const accentStroke = phase === 'upload' ? uploadStroke : downloadStroke;
 
   const tickMarks =
     speedUnit === 'MBps'
@@ -169,7 +197,7 @@ export const PrecisionGauge: React.FC<PrecisionGaugeProps> = ({
 
   return (
     <div className="flex w-full flex-col items-center justify-center py-1">
-      {/* Status text cleanly positioned OUTSIDE and above the half-circle gauge */}
+      {/* Status text cleanly positioned OUTSIDE and above the gauge */}
       <div className="mb-2 flex min-h-6 items-center justify-center text-center">
         <AnimatePresence mode="wait">
           <motion.div
@@ -178,7 +206,7 @@ export const PrecisionGauge: React.FC<PrecisionGaugeProps> = ({
             animate={{opacity: 1, y: 0}}
             exit={{opacity: 0, y: -4}}
             transition={{duration: 0.18, ease: [0.16, 1, 0.3, 1]}}
-            className="flex flex-wrap items-center justify-center gap-2 text-xs font-medium text-slate-600 dark:text-slate-300"
+            className="flex flex-wrap items-center justify-center gap-2 text-xs font-medium text-stone-600 dark:text-slate-300"
           >
             {isRunning && (
               <motion.span
@@ -186,20 +214,20 @@ export const PrecisionGauge: React.FC<PrecisionGaugeProps> = ({
                 transition={{duration: 1.2, repeat: Infinity, ease: 'easeInOut'}}
                 className={`inline-block h-1.5 w-1.5 rounded-full ${
                   phase === 'upload'
-                    ? 'bg-cyan-600 dark:bg-cyan-400'
-                    : 'bg-blue-600 dark:bg-blue-400'
+                    ? 'bg-[#65A30D] dark:bg-[#A3E635]'
+                    : 'bg-[#1D4ED8] dark:bg-[#38BDF8]'
                 }`}
                 aria-hidden="true"
               />
             )}
             <span>{getPhaseLabel(phase, transferProgress)}</span>
             {isRunning && (
-              <span className="font-mono text-slate-400 dark:text-slate-500 tabular-nums">
+              <span className="font-mono text-stone-400 dark:text-slate-500 tabular-nums">
                 · {progressPct}%
               </span>
             )}
             {transferProgress && isRunning && (
-              <span className="font-mono text-slate-500 dark:text-slate-400 tabular-nums">
+              <span className="font-mono text-stone-500 dark:text-slate-400 tabular-nums">
                 · {formatTransferSize(transferProgress.bytes)} /{' '}
                 {formatTransferSize(transferProgress.targetBytes)}
               </span>
@@ -210,28 +238,48 @@ export const PrecisionGauge: React.FC<PrecisionGaugeProps> = ({
 
       <div className="relative w-full max-w-[332px]">
         <svg
-          viewBox="0 0 320 242"
+          viewBox="0 0 320 246"
           className="w-full h-auto select-none"
           role="img"
           aria-label={`Speed gauge showing ${displayedValue.toFixed(1)} ${speedUnit}`}
         >
-          {/* Outer circular test progress ring */}
+          {/* Outer Lime Upload progress arc */}
           <path
-            d={outerProgressTrackPath}
+            d={ulTrackPath}
             fill="none"
-            className="stroke-slate-100 dark:stroke-slate-800/70"
-            strokeWidth="2.5"
+            className="stroke-[#EAE6DD] dark:stroke-[#1E2942]/70"
+            strokeWidth="3"
             strokeLinecap="round"
           />
           <motion.path
-            d={outerProgressTrackPath}
+            d={ulTrackPath}
             fill="none"
-            stroke={accentStroke}
-            strokeWidth="2.5"
+            stroke={uploadStroke}
+            strokeWidth="3"
             strokeLinecap="round"
             style={{
-              pathLength: smoothProgress,
-              opacity: isRunning || phase === 'complete' ? 0.7 : 0,
+              pathLength: smoothUlProgress,
+              opacity: computedUlProgress > 0 ? 0.92 : 0,
+            }}
+          />
+
+          {/* Inner-outer Blue/Cyan Download progress arc */}
+          <path
+            d={dlTrackPath}
+            fill="none"
+            className="stroke-[#EAE6DD] dark:stroke-[#1E2942]/80"
+            strokeWidth="3"
+            strokeLinecap="round"
+          />
+          <motion.path
+            d={dlTrackPath}
+            fill="none"
+            stroke={downloadStroke}
+            strokeWidth="3"
+            strokeLinecap="round"
+            style={{
+              pathLength: smoothDlProgress,
+              opacity: computedDlProgress > 0 ? 0.92 : 0,
             }}
           />
 
@@ -249,7 +297,7 @@ export const PrecisionGauge: React.FC<PrecisionGaugeProps> = ({
                   y1={inner.y}
                   x2={outer.x}
                   y2={outer.y}
-                  className="stroke-slate-300 dark:stroke-slate-700"
+                  className="stroke-[#D6D0C4] dark:stroke-[#334155]"
                   strokeWidth="1.5"
                   strokeLinecap="round"
                 />
@@ -258,7 +306,7 @@ export const PrecisionGauge: React.FC<PrecisionGaugeProps> = ({
                   y={labelPt.y}
                   textAnchor="middle"
                   dominantBaseline="middle"
-                  className="fill-slate-400 dark:fill-slate-500 text-[9.5px] font-mono tabular-nums"
+                  className="fill-stone-400 dark:fill-slate-500 text-[9.5px] font-mono tabular-nums"
                 >
                   {mark.label}
                 </text>
@@ -270,8 +318,8 @@ export const PrecisionGauge: React.FC<PrecisionGaugeProps> = ({
           <path
             d={fullTrackPath}
             fill="none"
-            className="stroke-slate-200 dark:stroke-slate-800"
-            strokeWidth="12"
+            className="stroke-[#EAE6DD] dark:stroke-[#1E2942]"
+            strokeWidth="11"
             strokeLinecap="round"
           />
 
@@ -280,7 +328,7 @@ export const PrecisionGauge: React.FC<PrecisionGaugeProps> = ({
             d={fullTrackPath}
             fill="none"
             stroke={accentStroke}
-            strokeWidth="12"
+            strokeWidth="11"
             strokeLinecap="round"
             style={{
               pathLength: smoothNormalized,
@@ -294,31 +342,46 @@ export const PrecisionGauge: React.FC<PrecisionGaugeProps> = ({
             cx={needleX}
             cy={needleY}
             r="5.5"
-            className="fill-white dark:fill-[#111827]"
+            className="fill-white dark:fill-[#0D1322]"
             stroke={accentStroke}
             strokeWidth="3"
             style={{opacity: needleOpacity}}
           />
         </svg>
 
-        {/* Center numeric readout only — uncluttered inside the arc */}
-        <div className="pointer-events-none absolute inset-x-0 top-[106px] flex flex-col items-center text-center">
+        {/* Center numeric readout */}
+        <div className="pointer-events-none absolute inset-x-0 top-[104px] flex flex-col items-center text-center">
           <div className="flex items-baseline justify-center gap-1.5">
             <AnimatedNumber
               value={displayedValue}
               adaptiveDecimals={speedUnit === 'Mbps'}
               decimals={speedUnit === 'MBps' ? (displayedValue < 10 ? 2 : 1) : 1}
-              className="font-mono text-5xl font-bold tracking-tight text-slate-900 dark:text-slate-50 tabular-nums"
+              className="font-mono text-5xl font-bold tracking-tight text-stone-900 dark:text-slate-50 tabular-nums"
             />
-            <span className="font-mono text-xs font-semibold tracking-wider text-slate-400 dark:text-slate-500">
+            <span className="font-mono text-xs font-semibold tracking-wide text-stone-500 dark:text-slate-400">
               {speedUnit}
+            </span>
+          </div>
+          {speedCaption && (
+            <div className="mt-1 font-mono text-[10.5px] font-semibold tracking-wide text-stone-500 dark:text-slate-400">
+              {speedCaption}
+            </div>
+          )}
+          <div className="mt-2 flex items-center gap-3.5 text-[11px] font-medium text-stone-500 dark:text-slate-400">
+            <span className="inline-flex items-center gap-1.5">
+              <span className="h-1.5 w-3 rounded-full bg-[#1D4ED8] dark:bg-[#38BDF8]" aria-hidden="true" />
+              <span>Download</span>
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="h-1.5 w-3 rounded-full bg-[#65A30D] dark:bg-[#A3E635]" aria-hidden="true" />
+              <span>Upload</span>
             </span>
           </div>
         </div>
       </div>
 
       {/* Primary Action Control */}
-      <div className="mt-1 flex items-center gap-3">
+      <div className="mt-1.5 flex items-center gap-3">
         <AnimatePresence mode="wait">
           {isRunning ? (
             <motion.button
@@ -330,9 +393,9 @@ export const PrecisionGauge: React.FC<PrecisionGaugeProps> = ({
               exit={{opacity: 0, scale: 0.96}}
               whileTap={{scale: 0.97}}
               transition={{duration: 0.16, ease: [0.16, 1, 0.3, 1]}}
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-6 py-2.5 text-sm font-semibold text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 dark:focus-visible:outline-blue-400"
+              className="inline-flex items-center gap-2 rounded-lg bg-white dark:bg-[#131C31] px-6 py-2.5 text-sm font-semibold text-stone-900 dark:text-slate-100 hover:bg-[#F8F7F4] dark:hover:bg-[#1E2942] vx-btn-secondary transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#1D4ED8] dark:focus-visible:outline-[#38BDF8]"
             >
-              <Square className="h-3.5 w-3.5 fill-slate-700 text-slate-700 dark:fill-slate-200 dark:text-slate-200" aria-hidden="true" />
+              <Square className="h-3.5 w-3.5 fill-stone-800 text-stone-800 dark:fill-slate-200 dark:text-slate-200" aria-hidden="true" />
               <span>Stop Test</span>
             </motion.button>
           ) : (
@@ -345,12 +408,12 @@ export const PrecisionGauge: React.FC<PrecisionGaugeProps> = ({
               exit={{opacity: 0, scale: 0.96}}
               whileTap={{scale: 0.98}}
               transition={{duration: 0.16, ease: [0.16, 1, 0.3, 1]}}
-              className="inline-flex items-center gap-2 rounded-lg bg-blue-600 dark:bg-blue-500 px-7 py-3 text-sm font-semibold text-white shadow-xs hover:bg-blue-700 dark:hover:bg-blue-400 transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 dark:focus-visible:outline-blue-400"
+              className="inline-flex items-center gap-2 rounded-lg bg-[#1D4ED8] hover:bg-[#1E40AF] dark:bg-[#0EA5E9] dark:hover:bg-[#38BDF8] px-7 py-3 text-sm font-semibold text-white dark:text-slate-950 vx-btn-primary transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#1D4ED8] dark:focus-visible:outline-[#38BDF8]"
             >
               {phase === 'complete' ? (
                 <RotateCcw className="h-4 w-4" aria-hidden="true" />
               ) : (
-                <Play className="h-4 w-4 fill-white" aria-hidden="true" />
+                <Play className="h-4 w-4 fill-current" aria-hidden="true" />
               )}
               <span>
                 {actionLabel || (phase === 'complete' ? 'Run Again' : 'Start Speed Test')}
@@ -361,24 +424,24 @@ export const PrecisionGauge: React.FC<PrecisionGaugeProps> = ({
       </div>
 
       {/* Time Taken & Estimated Time Telemetry Readout */}
-      <div className="mt-3.5 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
+      <div className="mt-3.5 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px] font-mono tabular-nums text-stone-500 dark:text-slate-400">
         {isRunning ? (
           <>
             <span className="inline-flex items-center gap-1.5">
-              <Clock className="h-3 w-3 text-slate-400 dark:text-slate-500" aria-hidden="true" />
+              <Clock className="h-3 w-3 text-stone-400 dark:text-slate-500" aria-hidden="true" />
               <span>
                 Elapsed{' '}
-                <strong className="font-semibold text-slate-800 dark:text-slate-200">
+                <strong className="font-semibold text-stone-900 dark:text-slate-200">
                   {formatDuration(elapsedSeconds)}
                 </strong>
               </span>
             </span>
-            <span className="text-slate-300 dark:text-slate-700" aria-hidden="true">
+            <span className="text-stone-300 dark:text-slate-700" aria-hidden="true">
               ·
             </span>
             <span>
               Est. Remaining{' '}
-              <strong className="font-semibold text-blue-600 dark:text-blue-400">
+              <strong className="font-semibold text-[#1D4ED8] dark:text-[#38BDF8]">
                 {estimatedRemainingSeconds !== null
                   ? `~${formatDuration(estimatedRemainingSeconds, false)}`
                   : 'calculating...'}
@@ -388,22 +451,22 @@ export const PrecisionGauge: React.FC<PrecisionGaugeProps> = ({
         ) : lastDurationSec !== null ? (
           <>
             <span className="inline-flex items-center gap-1.5">
-              <Clock className="h-3 w-3 text-slate-400 dark:text-slate-500" aria-hidden="true" />
+              <Clock className="h-3 w-3 text-stone-400 dark:text-slate-500" aria-hidden="true" />
               <span>
                 Time Taken{' '}
-                <strong className="font-semibold text-slate-800 dark:text-slate-200">
+                <strong className="font-semibold text-stone-900 dark:text-slate-200">
                   {formatDuration(lastDurationSec)}
                 </strong>
               </span>
             </span>
             {estimatedTotalSeconds !== null && (
               <>
-                <span className="text-slate-300 dark:text-slate-700" aria-hidden="true">
+                <span className="text-stone-300 dark:text-slate-700" aria-hidden="true">
                   ·
                 </span>
                 <span>
                   Est. Duration{' '}
-                  <strong className="font-medium text-slate-700 dark:text-slate-300">
+                  <strong className="font-medium text-stone-700 dark:text-slate-300">
                     ~{formatDuration(estimatedTotalSeconds, false)}
                   </strong>
                 </span>
@@ -412,10 +475,10 @@ export const PrecisionGauge: React.FC<PrecisionGaugeProps> = ({
           </>
         ) : (
           <span className="inline-flex items-center gap-1.5">
-            <Clock className="h-3 w-3 text-slate-400 dark:text-slate-500" aria-hidden="true" />
+            <Clock className="h-3 w-3 text-stone-400 dark:text-slate-500" aria-hidden="true" />
             <span>
               Estimated Time{' '}
-              <strong className="font-semibold text-slate-700 dark:text-slate-300">
+              <strong className="font-semibold text-stone-700 dark:text-slate-300">
                 {estimatedTotalSeconds !== null
                   ? `~${formatDuration(estimatedTotalSeconds, false)}`
                   : 'depends on speed'}

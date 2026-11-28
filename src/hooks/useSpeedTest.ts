@@ -20,6 +20,10 @@ import {
   evaluateActivities,
   evaluateBufferbloat,
 } from '../utils/scoring';
+import {
+  type CalibratedLocation,
+  haversineKm,
+} from './useCalibrationPermissions';
 
 const HISTORY_STORAGE_KEY = 'veloxis_speed_history_v1';
 
@@ -95,7 +99,14 @@ function computeJitter(values: number[]): number {
   return totalDelta / (values.length - 1);
 }
 
-export function useSpeedTest() {
+export interface SpeedTestCalibrationOptions {
+  calibratedLocation?: CalibratedLocation | null;
+  recommendedStreams?: number;
+}
+
+export function useSpeedTest(calibration?: SpeedTestCalibrationOptions) {
+  const calibratedLocation = calibration?.calibratedLocation ?? null;
+  const recommendedStreams = calibration?.recommendedStreams ?? 4;
   const [phase, setPhase] = useState<TestPhase>('idle');
   const [progressPct, setProgressPct] = useState(0);
   const [liveSpeedMbps, setLiveSpeedMbps] = useState(0);
@@ -104,6 +115,12 @@ export function useSpeedTest() {
   const [liveDownloadMbps, setLiveDownloadMbps] = useState<number | null>(null);
   const [liveUploadMbps, setLiveUploadMbps] = useState<number | null>(null);
   const [liveLoadedPingMs, setLiveLoadedPingMs] = useState<number | null>(null);
+  const [liveDownloadLoadedPingMs, setLiveDownloadLoadedPingMs] = useState<
+    number | null
+  >(null);
+  const [liveUploadLoadedPingMs, setLiveUploadLoadedPingMs] = useState<
+    number | null
+  >(null);
   const [livePacketLossPct, setLivePacketLossPct] = useState<number>(0);
   const [transferProgress, setTransferProgress] =
     useState<TransferProgress | null>(null);
@@ -332,14 +349,65 @@ export function useSpeedTest() {
     void probeEdgeNodes();
   }, [probeEdgeNodes, refreshNetworkInfo]);
 
+  useEffect(() => {
+    if (!calibratedLocation?.countryCode) return;
+    setNetworkInfo((prev) => ({
+      ...prev,
+      city: calibratedLocation.city || prev.city,
+      region: calibratedLocation.region || prev.region,
+      country: calibratedLocation.country || prev.country,
+      countryCode: calibratedLocation.countryCode || prev.countryCode,
+      detected: true,
+    }));
+    fetch(
+      `/api/regional-isps?countryCode=${encodeURIComponent(calibratedLocation.countryCode)}&city=${encodeURIComponent(calibratedLocation.city || '')}`,
+      {cache: 'no-store'},
+    )
+      .then((r) => (r.ok ? r.json() : null))
+      .then((ispData: RegionalIspsResponse | null) => {
+        if (ispData) setRegionalIsps(ispData);
+      })
+      .catch(() => {});
+  }, [
+    calibratedLocation?.city,
+    calibratedLocation?.country,
+    calibratedLocation?.countryCode,
+    calibratedLocation?.region,
+  ]);
+
+  const calibratedEdgeNodes: EdgeNode[] = edgeNodes.map((node) => {
+    if (
+      calibratedLocation &&
+      typeof node.lat === 'number' &&
+      typeof node.lon === 'number'
+    ) {
+      return {
+        ...node,
+        distanceKm: haversineKm(
+          calibratedLocation.lat,
+          calibratedLocation.lon,
+          node.lat,
+          node.lon,
+        ),
+      };
+    }
+    return node;
+  });
+
   const effectiveNode =
     selectedNodeId === 'auto'
-      ? [...edgeNodes]
+      ? [...calibratedEdgeNodes]
           .filter((n) => n.available)
-          .sort((a, b) => (a.rttMs ?? 9999) - (b.rttMs ?? 9999))[0] ??
-        edgeNodes[0] ??
+          .sort((a, b) => {
+            const rttDiff = (a.rttMs ?? 9999) - (b.rttMs ?? 9999);
+            if (Math.abs(rttDiff) > 8) return rttDiff;
+            return (a.distanceKm ?? 99999) - (b.distanceKm ?? 99999);
+          })[0] ??
+        calibratedEdgeNodes[0] ??
         null
-      : edgeNodes.find((n) => n.id === selectedNodeId) ?? edgeNodes[0] ?? null;
+      : calibratedEdgeNodes.find((n) => n.id === selectedNodeId) ??
+        calibratedEdgeNodes[0] ??
+        null;
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -387,6 +455,14 @@ export function useSpeedTest() {
     setPhase('idle');
     setProgressPct(0);
     setLiveSpeedMbps(0);
+    setLivePingMs(null);
+    setLiveJitterMs(null);
+    setLiveDownloadMbps(null);
+    setLiveUploadMbps(null);
+    setLiveLoadedPingMs(null);
+    setLiveDownloadLoadedPingMs(null);
+    setLiveUploadLoadedPingMs(null);
+    setLivePacketLossPct(0);
     setElapsedSeconds(0);
     setEstimatedRemainingSeconds(null);
   }, [stopAll]);
@@ -436,6 +512,8 @@ export function useSpeedTest() {
       setLiveDownloadMbps(null);
       setLiveUploadMbps(null);
       setLiveLoadedPingMs(null);
+      setLiveDownloadLoadedPingMs(null);
+      setLiveUploadLoadedPingMs(null);
       setLivePacketLossPct(0);
       setTransferProgress(null);
       setElapsedSeconds(0);
@@ -514,6 +592,8 @@ export function useSpeedTest() {
 
         // Phase 2: Multi-stream Download (timed window OR exact subscription file payload)
         setPhase('download');
+        setLiveSpeedMbps(0);
+        setLiveDownloadMbps(0);
         const dlRampSkipMs = 600;
         const dlStart = performance.now();
         let dlTotalBytes = 0;
@@ -582,7 +662,7 @@ export function useSpeedTest() {
             !dlFinished &&
             (isFileMode || performance.now() - dlStart < dlDurationMs)
           ) {
-            await new Promise((r) => setTimeout(r, 750));
+            await new Promise((r) => setTimeout(r, 700));
             if (
               signal.aborted ||
               dlFinished ||
@@ -593,7 +673,7 @@ export function useSpeedTest() {
             const p0 = performance.now();
             try {
               await fetch(
-                `/api/speedtest/ping?loaded=1&node=${encodeURIComponent(effectiveNode?.id ?? 'local')}&t=${Date.now()}`,
+                `/api/speedtest/ping?loaded=dl&node=${encodeURIComponent(effectiveNode?.id ?? 'local')}&t=${Date.now()}`,
                 {
                   cache: 'no-store',
                   signal,
@@ -601,7 +681,9 @@ export function useSpeedTest() {
               );
               const rtt = performance.now() - p0;
               loadedPings.push(rtt);
-              setLiveLoadedPingMs(median(loadedPings));
+              const dlMed = median(loadedPings);
+              setLiveDownloadLoadedPingMs(dlMed);
+              setLiveLoadedPingMs(dlMed);
             } catch {
               // Ignore aborted probes
             }
@@ -664,23 +746,20 @@ export function useSpeedTest() {
           setSamples([...recordedSamples]);
         }, 200);
 
+        const dlWorkers = Array.from({length: recommendedStreams}, () =>
+          runDownloadWorker(),
+        );
+
         if (isFileMode) {
           await Promise.all([
-            runDownloadWorker(),
-            runDownloadWorker(),
-            runDownloadWorker(),
-            runDownloadWorker(),
+            Promise.all(dlWorkers).then(() => {
+              dlFinished = true;
+            }),
+            runLoadedPingProbe(),
           ]);
-          dlFinished = true;
         } else {
           await Promise.race([
-            Promise.all([
-              runDownloadWorker(),
-              runDownloadWorker(),
-              runDownloadWorker(),
-              runDownloadWorker(),
-              runLoadedPingProbe(),
-            ]),
+            Promise.all([...dlWorkers, runLoadedPingProbe()]),
             new Promise<void>((resolve) => {
               const check = window.setInterval(() => {
                 if (signal.aborted || performance.now() - dlStart >= dlDurationMs + 250) {
@@ -709,18 +788,23 @@ export function useSpeedTest() {
             : (dlTotalBytes * 8) / (totalDlSec * 1e6);
 
         setLiveDownloadMbps(finalDownloadMbps);
-        const loadedPing = loadedPings.length > 0 ? median(loadedPings) : unloadedPing;
-        setLiveLoadedPingMs(loadedPing);
+        const dlLoadedPing =
+          loadedPings.length > 0 ? median(loadedPings) : unloadedPing;
+        setLiveDownloadLoadedPingMs(dlLoadedPing);
+        setLiveLoadedPingMs(dlLoadedPing);
 
         // Phase 3: Multi-stream Upload (timed window OR exact subscription file payload)
         setPhase('upload');
         setLiveSpeedMbps(0);
+        setLiveUploadMbps(0);
         const ulRampSkipMs = 600;
         const ulStart = performance.now();
         let ulTotalBytes = 0;
         let ulSteadyBytes = 0;
         let ulSteadyStart = 0;
         let ulRemainingToAssign = targetUlBytes;
+        let ulFinished = false;
+        const ulLoadedPings: number[] = [];
         const ulWindowBuckets: Array<{time: number; bytes: number}> = [];
         const chunkPayloadBytes = isFileMode ? 8 * 1024 * 1024 : 3 * 1024 * 1024;
         const uploadPayload = createUploadPayload(chunkPayloadBytes);
@@ -789,6 +873,41 @@ export function useSpeedTest() {
           }
         };
 
+        const runUploadLoadedPingProbe = async () => {
+          while (
+            !signal.aborted &&
+            !ulFinished &&
+            (isFileMode || performance.now() - ulStart < ulDurationMs)
+          ) {
+            await new Promise((r) => setTimeout(r, 700));
+            if (
+              signal.aborted ||
+              ulFinished ||
+              (!isFileMode && performance.now() - ulStart >= ulDurationMs)
+            ) {
+              break;
+            }
+            const p0 = performance.now();
+            try {
+              await fetch(
+                `/api/speedtest/ping?loaded=ul&node=${encodeURIComponent(effectiveNode?.id ?? 'local')}&t=${Date.now()}`,
+                {
+                  cache: 'no-store',
+                  signal,
+                },
+              );
+              const rtt = performance.now() - p0;
+              ulLoadedPings.push(rtt);
+              const ulMed = median(ulLoadedPings);
+              const allMed = median([...loadedPings, ...ulLoadedPings]);
+              setLiveUploadLoadedPingMs(ulMed);
+              setLiveLoadedPingMs(allMed);
+            } catch {
+              // Ignore aborted probes
+            }
+          }
+        };
+
         const ulSampler = window.setInterval(() => {
           const now = performance.now();
           const elapsed = now - ulStart;
@@ -832,12 +951,24 @@ export function useSpeedTest() {
             t: Number(((now - testStart) / 1000).toFixed(2)),
             downloadMbps: null,
             uploadMbps: Number(instMbps.toFixed(2)),
-            pingMs: null,
+            pingMs:
+              ulLoadedPings.length > 0
+                ? Number(ulLoadedPings[ulLoadedPings.length - 1].toFixed(1))
+                : null,
           });
           setSamples([...recordedSamples]);
         }, 200);
 
-        await Promise.all([runUploadWorker(), runUploadWorker(), runUploadWorker()]);
+        const ulWorkers = Array.from(
+          {length: Math.max(2, Math.min(3, recommendedStreams))},
+          () => runUploadWorker(),
+        );
+        await Promise.all([
+          Promise.all(ulWorkers).then(() => {
+            ulFinished = true;
+          }),
+          runUploadLoadedPingProbe(),
+        ]);
         window.clearInterval(ulSampler);
         if (signal.aborted) return null;
 
@@ -853,6 +984,14 @@ export function useSpeedTest() {
             ? (ulSteadyBytes * 8) / (steadyUlSec * 1e6)
             : (ulTotalBytes * 8) / (totalUlSec * 1e6);
 
+        const ulLoadedPing =
+          ulLoadedPings.length > 0 ? median(ulLoadedPings) : dlLoadedPing;
+        const combinedLoadedSamples = [...loadedPings, ...ulLoadedPings];
+        const loadedPing =
+          combinedLoadedSamples.length > 0
+            ? median(combinedLoadedSamples)
+            : unloadedPing;
+
         const totalDurationSec = Number(
           ((performance.now() - testStart) / 1000).toFixed(1),
         );
@@ -863,7 +1002,9 @@ export function useSpeedTest() {
         setElapsedSeconds(totalDurationSec);
         setEstimatedRemainingSeconds(0);
         setLiveUploadMbps(finalUploadMbps);
-        setLiveSpeedMbps(finalDownloadMbps);
+        setLiveUploadLoadedPingMs(ulLoadedPing);
+        setLiveLoadedPingMs(loadedPing);
+        setLiveSpeedMbps((finalDownloadMbps + finalUploadMbps) / 2);
         setProgressPct(100);
         setTransferProgress(null);
 
@@ -894,6 +1035,8 @@ export function useSpeedTest() {
           uploadMbps: Number(finalUploadMbps.toFixed(2)),
           pingMs: Number(unloadedPing.toFixed(1)),
           loadedPingMs: Number(loadedPing.toFixed(1)),
+          downloadLoadedPingMs: Number(dlLoadedPing.toFixed(1)),
+          uploadLoadedPingMs: Number(ulLoadedPing.toFixed(1)),
           jitterMs: Number(jitter.toFixed(1)),
           packetLossPct,
           veloxisScore: score,
@@ -903,6 +1046,17 @@ export function useSpeedTest() {
             ...networkInfo,
             serverNode: effectiveNode?.label ?? networkInfo.serverNode,
           },
+          testLocation: calibratedLocation
+            ? {
+                lat: Number(calibratedLocation.lat.toFixed(2)),
+                lon: Number(calibratedLocation.lon.toFixed(2)),
+                city: calibratedLocation.city,
+                region: calibratedLocation.region,
+                country: calibratedLocation.country,
+                countryCode: calibratedLocation.countryCode,
+                accuracyKm: calibratedLocation.accuracyKm ?? 2,
+              }
+            : undefined,
           samples: recordedSamples,
           durationSec: totalDurationSec,
           transferredBytes: isFileMode
@@ -943,7 +1097,15 @@ export function useSpeedTest() {
         return null;
       }
     },
-    [effectiveNode?.id, effectiveNode?.label, networkInfo, stopAll, syncDevices],
+    [
+      calibratedLocation,
+      effectiveNode?.id,
+      effectiveNode?.label,
+      networkInfo,
+      recommendedStreams,
+      stopAll,
+      syncDevices,
+    ],
   );
 
   const startRealtimeMonitor = useCallback(() => {
@@ -1081,6 +1243,17 @@ export function useSpeedTest() {
         ...networkInfo,
         serverNode: effectiveNode?.label ?? networkInfo.serverNode,
       },
+      testLocation: calibratedLocation
+        ? {
+            lat: Number(calibratedLocation.lat.toFixed(2)),
+            lon: Number(calibratedLocation.lon.toFixed(2)),
+            city: calibratedLocation.city,
+            region: calibratedLocation.region,
+            country: calibratedLocation.country,
+            countryCode: calibratedLocation.countryCode,
+            accuracyKm: calibratedLocation.accuracyKm ?? 2,
+          }
+        : undefined,
       samples: monitorSamples,
     };
 
@@ -1092,6 +1265,7 @@ export function useSpeedTest() {
     });
     return snapshot;
   }, [
+    calibratedLocation,
     effectiveNode?.label,
     latestResult?.downloadMbps,
     latestResult?.uploadMbps,
@@ -1136,6 +1310,8 @@ export function useSpeedTest() {
     liveDownloadMbps,
     liveUploadMbps,
     liveLoadedPingMs,
+    liveDownloadLoadedPingMs,
+    liveUploadLoadedPingMs,
     livePacketLossPct,
     transferProgress,
     elapsedSeconds,
@@ -1147,7 +1323,7 @@ export function useSpeedTest() {
     regionalIsps,
     browserHint,
     detectedDevices,
-    edgeNodes,
+    edgeNodes: calibratedEdgeNodes,
     selectedNodeId,
     effectiveNode,
     isProbingNodes,

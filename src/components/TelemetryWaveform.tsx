@@ -21,11 +21,11 @@ export const TelemetryWaveform: React.FC<TelemetryWaveformProps> = ({
   isDark = false,
 }) => {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
-  const dlColor = isDark ? '#60A5FA' : '#2563EB';
-  const ulColor = isDark ? '#22D3EE' : '#0891B2';
-  const gridStroke = isDark ? '#1E293B' : '#E2E8F0';
-  const crosshairStroke = isDark ? '#64748B' : '#94A3B8';
-  const dotStroke = isDark ? '#111827' : '#FFFFFF';
+  const dlColor = isDark ? '#38BDF8' : '#1D4ED8';
+  const ulColor = isDark ? '#A3E635' : '#65A30D';
+  const gridStroke = isDark ? '#1E2942' : '#DFDAD0';
+  const crosshairStroke = isDark ? '#64748B' : '#78716C';
+  const dotStroke = isDark ? '#0D1322' : '#FFFFFF';
 
   const width = 640;
   const height = 210;
@@ -101,25 +101,25 @@ export const TelemetryWaveform: React.FC<TelemetryWaveformProps> = ({
       initial={{opacity: 0, y: 8}}
       animate={{opacity: 1, y: 0}}
       transition={{duration: 0.24, ease: [0.16, 1, 0.3, 1]}}
-      className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] p-6 sm:p-7 transition-colors duration-200"
+      className="rounded-xl bg-white dark:bg-[#0D1322] p-6 sm:p-7 vx-card transition-colors duration-200"
     >
       <div className="flex flex-wrap items-baseline justify-between gap-4 mb-5">
         <div>
-          <h3 className="text-base font-semibold text-slate-900 dark:text-slate-50">{title}</h3>
-          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{subtitle}</p>
+          <h3 className="text-base font-semibold text-stone-900 dark:text-slate-50">{title}</h3>
+          <p className="text-xs text-stone-500 dark:text-slate-400 mt-1">{subtitle}</p>
         </div>
 
-        <div className="flex items-center gap-4 text-xs text-slate-600 dark:text-slate-300">
+        <div className="flex items-center gap-4 text-xs text-stone-600 dark:text-slate-300">
           <span className="inline-flex items-center gap-1.5">
-            <span className="h-2 w-3 rounded-xs bg-blue-600 dark:bg-blue-400" aria-hidden="true" />
+            <span className="h-2 w-3 rounded-xs bg-[#1D4ED8] dark:bg-[#38BDF8]" aria-hidden="true" />
             <span>Download</span>
           </span>
           <span className="inline-flex items-center gap-1.5">
-            <span className="h-2 w-3 rounded-xs bg-cyan-600 dark:bg-cyan-400" aria-hidden="true" />
+            <span className="h-2 w-3 rounded-xs bg-[#65A30D] dark:bg-[#A3E635]" aria-hidden="true" />
             <span>Upload</span>
           </span>
           {pingPoints.length > 0 && (
-            <span className="font-mono tabular-nums text-slate-500 dark:text-slate-400">
+            <span className="font-mono tabular-nums text-stone-500 dark:text-slate-400">
               Latest Ping: {pingPoints[pingPoints.length - 1].val.toFixed(0)} ms
             </span>
           )}
@@ -127,7 +127,7 @@ export const TelemetryWaveform: React.FC<TelemetryWaveformProps> = ({
       </div>
 
       {samples.length === 0 ? (
-        <div className="flex h-[210px] items-center justify-center rounded-lg border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/50 px-4 text-center text-xs text-slate-500 dark:text-slate-400">
+        <div className="flex h-[210px] items-center justify-center rounded-lg border border-dashed border-[#DFDAD0] dark:border-[#1E2942] bg-[#F8F7F4] dark:bg-[#0A101D] px-4 text-center text-xs text-stone-500 dark:text-slate-400">
           {emptyHint}
         </div>
       ) : (
@@ -171,7 +171,7 @@ export const TelemetryWaveform: React.FC<TelemetryWaveformProps> = ({
                     y={y}
                     textAnchor="end"
                     dominantBaseline="middle"
-                    className="fill-slate-400 dark:fill-slate-500 text-[10px] font-mono tabular-nums"
+                    className="fill-stone-400 dark:fill-slate-500 text-[10px] font-mono tabular-nums"
                   >
                     {Math.round(tick)}
                   </text>
@@ -244,7 +244,7 @@ export const TelemetryWaveform: React.FC<TelemetryWaveformProps> = ({
               x={pad.left}
               y={height - 6}
               textAnchor="start"
-              className="fill-slate-400 dark:fill-slate-500 text-[10px] font-mono tabular-nums"
+              className="fill-stone-400 dark:fill-slate-500 text-[10px] font-mono tabular-nums"
             >
               {samples[0].t.toFixed(1)}s
             </text>
@@ -252,7 +252,7 @@ export const TelemetryWaveform: React.FC<TelemetryWaveformProps> = ({
               x={pad.left + plotW}
               y={height - 6}
               textAnchor="end"
-              className="fill-slate-400 dark:fill-slate-500 text-[10px] font-mono tabular-nums"
+              className="fill-stone-400 dark:fill-slate-500 text-[10px] font-mono tabular-nums"
             >
               {samples[samples.length - 1].t.toFixed(1)}s
             </text>
@@ -266,21 +266,21 @@ export const TelemetryWaveform: React.FC<TelemetryWaveformProps> = ({
                 animate={{opacity: 1, y: 0}}
                 exit={{opacity: 0}}
                 transition={{duration: 0.14}}
-                className="pointer-events-none absolute right-3 top-2 rounded-md border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/95 px-2.5 py-1.5 text-[11px] font-mono tabular-nums text-slate-700 dark:text-slate-200 shadow-xs"
+                className="pointer-events-none absolute right-3 top-2 rounded-md bg-white/95 dark:bg-[#0D1322]/95 px-2.5 py-1.5 text-[11px] font-mono tabular-nums text-stone-700 dark:text-slate-200 vx-card-elevated"
               >
                 <span>t={activeSample.t.toFixed(1)}s</span>
                 {activeSample.downloadMbps !== null && (
-                  <span className="ml-2.5 text-blue-600 dark:text-blue-400">
+                  <span className="ml-2.5 text-[#1D4ED8] dark:text-[#38BDF8]">
                     DL {formatSpeedValue(activeSample.downloadMbps, speedUnit)} {speedUnit}
                   </span>
                 )}
                 {activeSample.uploadMbps !== null && (
-                  <span className="ml-2.5 text-cyan-700 dark:text-cyan-400">
+                  <span className="ml-2.5 text-[#65A30D] dark:text-[#A3E635]">
                     UL {formatSpeedValue(activeSample.uploadMbps, speedUnit)} {speedUnit}
                   </span>
                 )}
                 {activeSample.pingMs !== null && (
-                  <span className="ml-2.5 text-slate-600 dark:text-slate-300">
+                  <span className="ml-2.5 text-stone-600 dark:text-slate-300">
                     Ping {activeSample.pingMs.toFixed(0)} ms
                   </span>
                 )}

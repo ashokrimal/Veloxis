@@ -54,32 +54,35 @@ export const ReliabilityWatchCard: React.FC<ReliabilityWatchCardProps> = ({
   return (
     <section
       aria-label="Scheduled reliability watch"
-      className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] px-6 py-5 sm:px-8 transition-colors duration-200"
+      className="rounded-xl bg-white dark:bg-[#0D1322] px-6 py-5 sm:px-8 vx-card transition-colors duration-200"
     >
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-start gap-3">
           <Clock3
             className={`h-5 w-5 shrink-0 mt-0.5 ${
               isActive
-                ? 'text-blue-600 dark:text-blue-400'
-                : 'text-slate-400 dark:text-slate-500'
+                ? 'text-[#1D4ED8] dark:text-[#38BDF8]'
+                : 'text-stone-400 dark:text-slate-500'
             }`}
             aria-hidden="true"
           />
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-50">
+              <h2 className="text-sm font-semibold text-stone-900 dark:text-slate-50">
                 Scheduled Reliability Watch
               </h2>
               {isActive && (
-                <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 dark:bg-blue-950/60 px-2 py-0.5 font-mono text-[11px] font-semibold text-blue-700 dark:text-blue-300 tabular-nums">
-                  {countdownSec !== null
-                    ? `Next run in ${formatDuration(countdownSec, false)}`
-                    : 'Armed'}
-                </span>
+                <>
+                  <span className="text-stone-300 dark:text-slate-600" aria-hidden="true">·</span>
+                  <span className="font-mono text-xs font-semibold text-[#1D4ED8] dark:text-[#38BDF8] tabular-nums">
+                    {countdownSec !== null
+                      ? `Next run in ${formatDuration(countdownSec, false)}`
+                      : 'Armed'}
+                  </span>
+                </>
               )}
             </div>
-            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            <p className="mt-1 text-xs text-stone-500 dark:text-slate-400">
               {isActive
                 ? `Automatically runs Quick Tests every ${intervalMin} min while this tab stays open (${runsCount} checks · ${alertsCount} alerts).`
                 : 'Run automatic periodic checks while this tab or app is open to catch ISP throttling and drops.'}
@@ -92,7 +95,7 @@ export const ReliabilityWatchCard: React.FC<ReliabilityWatchCardProps> = ({
             aria-label="Reliability watch interval"
             value={intervalMin}
             onChange={(e) => onChangeInterval(Number(e.target.value))}
-            className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:outline-none cursor-pointer"
+            className="rounded-lg border border-[#DFDAD0] dark:border-[#1E2942] bg-[#F8F7F4] dark:bg-[#131C31] px-3 py-1.5 text-xs font-medium text-stone-900 dark:text-slate-100 focus:border-[#1D4ED8] dark:focus:border-[#38BDF8] focus:outline-none cursor-pointer"
           >
             {INTERVAL_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>
@@ -105,7 +108,7 @@ export const ReliabilityWatchCard: React.FC<ReliabilityWatchCardProps> = ({
             aria-label="Minimum speed alert threshold"
             value={thresholdPct}
             onChange={(e) => onChangeThresholdPct(Number(e.target.value))}
-            className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:outline-none cursor-pointer"
+            className="rounded-lg border border-[#DFDAD0] dark:border-[#1E2942] bg-[#F8F7F4] dark:bg-[#131C31] px-3 py-1.5 text-xs font-medium text-stone-900 dark:text-slate-100 focus:border-[#1D4ED8] dark:focus:border-[#38BDF8] focus:outline-none cursor-pointer"
           >
             {THRESHOLD_OPTIONS.map((pct) => (
               <option key={pct} value={pct}>
@@ -121,10 +124,10 @@ export const ReliabilityWatchCard: React.FC<ReliabilityWatchCardProps> = ({
             type="button"
             onClick={onToggleNotifications}
             aria-pressed={notificationsEnabled}
-            className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer whitespace-nowrap ${
+            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer whitespace-nowrap ${
               notificationsEnabled
-                ? 'border-blue-600 dark:border-blue-500 bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300'
-                : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'
+                ? 'vx-pill-active text-[#1D4ED8] dark:text-[#38BDF8] font-semibold'
+                : 'bg-white dark:bg-[#131C31] text-stone-600 dark:text-slate-300 hover:bg-[#F8F7F4] dark:hover:bg-[#1A2540] vx-btn-secondary'
             }`}
           >
             {notificationsEnabled ? (
@@ -138,7 +141,7 @@ export const ReliabilityWatchCard: React.FC<ReliabilityWatchCardProps> = ({
       </div>
 
       {isActive && thresholdMbps === null && (
-        <p className="mt-2.5 text-[11px] text-slate-500 dark:text-slate-400">
+        <p className="mt-2.5 text-[11px] text-stone-500 dark:text-slate-400">
           Set your subscribed ISP plan speed below to enable automatic under-delivery alerts during scheduled runs.
         </p>
       )}

@@ -203,15 +203,15 @@ export const HistoryComparison: React.FC<HistoryComparisonProps> = ({
       exit={{opacity: 0, y: -6}}
       transition={{duration: 0.22, ease: [0.16, 1, 0.3, 1]}}
       aria-label="Side-by-side test comparison"
-      className="border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/55"
+      className="border-b border-[#DFDAD0] dark:border-[#1E2942] bg-[#F8F7F4] dark:bg-[#0A101D]"
     >
       {/* Comparison Header & Run Selectors */}
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200/80 dark:border-slate-800 px-6 py-4 sm:px-8">
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#EAE6DD] dark:border-[#1E2942] px-6 py-4 sm:px-8">
         <div>
-          <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-50">
+          <h3 className="text-sm font-semibold text-stone-900 dark:text-slate-50">
             Side-by-Side Comparison
           </h3>
-          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+          <p className="mt-0.5 text-xs text-stone-500 dark:text-slate-400">
             Select two saved runs below or from the table to measure improvements or degradation from Run A to Run B.
           </p>
         </div>
@@ -220,12 +220,12 @@ export const HistoryComparison: React.FC<HistoryComparisonProps> = ({
           <button
             type="button"
             onClick={handleCopyComparison}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer whitespace-nowrap"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[#DFDAD0] dark:border-[#1E2942] bg-white dark:bg-[#131C31] px-3 py-1.5 text-xs font-medium text-stone-700 dark:text-slate-200 hover:bg-[#F8F7F4] dark:hover:bg-[#1A2540] cursor-pointer whitespace-nowrap"
           >
             {copied ? (
               <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
             ) : (
-              <Copy className="h-3.5 w-3.5 text-slate-500 dark:text-slate-400" aria-hidden="true" />
+              <Copy className="h-3.5 w-3.5 text-stone-500 dark:text-slate-400" aria-hidden="true" />
             )}
             <span>{copied ? 'Copied' : 'Copy'}</span>
           </button>
@@ -233,18 +233,18 @@ export const HistoryComparison: React.FC<HistoryComparisonProps> = ({
           <button
             type="button"
             onClick={() => downloadComparisonReportPng(runA, runB, speedUnit, isDark)}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer whitespace-nowrap"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[#DFDAD0] dark:border-[#1E2942] bg-white dark:bg-[#131C31] px-3 py-1.5 text-xs font-medium text-stone-700 dark:text-slate-200 hover:bg-[#F8F7F4] dark:hover:bg-[#1A2540] cursor-pointer whitespace-nowrap"
           >
-            <ImageDown className="h-3.5 w-3.5 text-slate-500 dark:text-slate-400" aria-hidden="true" />
+            <ImageDown className="h-3.5 w-3.5 text-stone-500 dark:text-slate-400" aria-hidden="true" />
             <span>PNG</span>
           </button>
 
           <button
             type="button"
             onClick={onSwapRuns}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer whitespace-nowrap"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[#DFDAD0] dark:border-[#1E2942] bg-white dark:bg-[#131C31] px-3 py-1.5 text-xs font-medium text-stone-700 dark:text-slate-200 hover:bg-[#F8F7F4] dark:hover:bg-[#1A2540] cursor-pointer whitespace-nowrap"
           >
-            <ArrowLeftRight className="h-3.5 w-3.5 text-slate-500 dark:text-slate-400" aria-hidden="true" />
+            <ArrowLeftRight className="h-3.5 w-3.5 text-stone-500 dark:text-slate-400" aria-hidden="true" />
             <span>Swap A / B</span>
           </button>
 
@@ -252,7 +252,7 @@ export const HistoryComparison: React.FC<HistoryComparisonProps> = ({
             type="button"
             onClick={onClose}
             aria-label="Close comparison view"
-            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer"
+            className="inline-flex items-center gap-1 rounded-lg border border-[#DFDAD0] dark:border-[#1E2942] bg-white dark:bg-[#131C31] px-2.5 py-1.5 text-xs font-medium text-stone-600 dark:text-slate-300 hover:bg-[#F8F7F4] dark:hover:bg-[#1A2540] cursor-pointer"
           >
             <X className="h-3.5 w-3.5" aria-hidden="true" />
             <span>Close</span>
@@ -261,11 +261,11 @@ export const HistoryComparison: React.FC<HistoryComparisonProps> = ({
       </div>
 
       {/* Dropdown Picker Row */}
-      <div className="grid grid-cols-1 gap-4 border-b border-slate-200/80 dark:border-slate-800 px-6 py-4 sm:grid-cols-2 sm:px-8">
+      <div className="grid grid-cols-1 gap-4 border-b border-[#EAE6DD] dark:border-[#1E2942] px-6 py-4 sm:grid-cols-2 sm:px-8">
         <div>
           <label
             htmlFor="compare-run-a"
-            className="block text-xs font-medium text-slate-600 dark:text-slate-300"
+            className="block text-xs font-medium text-stone-600 dark:text-slate-300"
           >
             Run A (Baseline)
           </label>
@@ -273,7 +273,7 @@ export const HistoryComparison: React.FC<HistoryComparisonProps> = ({
             id="compare-run-a"
             value={runA.id}
             onChange={(e) => onChangeRunA(e.target.value)}
-            className="mt-1.5 w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 font-mono text-xs text-slate-900 dark:text-slate-100 focus:border-blue-600 dark:focus:border-blue-400 focus:outline-none"
+            className="mt-1.5 w-full rounded-lg border border-[#DFDAD0] dark:border-[#1E2942] bg-white dark:bg-[#0D1322] px-3 py-2 font-mono text-xs text-stone-900 dark:text-slate-100 focus:border-[#1D4ED8] dark:focus:border-[#38BDF8] focus:outline-none"
           >
             {history.map((item) => (
               <option key={item.id} value={item.id}>
@@ -281,7 +281,7 @@ export const HistoryComparison: React.FC<HistoryComparisonProps> = ({
               </option>
             ))}
           </select>
-          <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+          <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-stone-500 dark:text-slate-400">
             <span>{formatModeName(runA)}</span>
             <span aria-hidden="true">·</span>
             <span>{runA.network.isp || 'Unknown ISP'}</span>
@@ -293,7 +293,7 @@ export const HistoryComparison: React.FC<HistoryComparisonProps> = ({
         <div>
           <label
             htmlFor="compare-run-b"
-            className="block text-xs font-medium text-slate-600 dark:text-slate-300"
+            className="block text-xs font-medium text-stone-600 dark:text-slate-300"
           >
             Run B (Compared)
           </label>
@@ -301,7 +301,7 @@ export const HistoryComparison: React.FC<HistoryComparisonProps> = ({
             id="compare-run-b"
             value={runB.id}
             onChange={(e) => onChangeRunB(e.target.value)}
-            className="mt-1.5 w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 font-mono text-xs text-slate-900 dark:text-slate-100 focus:border-blue-600 dark:focus:border-blue-400 focus:outline-none"
+            className="mt-1.5 w-full rounded-lg border border-[#DFDAD0] dark:border-[#1E2942] bg-white dark:bg-[#0D1322] px-3 py-2 font-mono text-xs text-stone-900 dark:text-slate-100 focus:border-[#1D4ED8] dark:focus:border-[#38BDF8] focus:outline-none"
           >
             {history.map((item) => (
               <option key={item.id} value={item.id}>
@@ -309,7 +309,7 @@ export const HistoryComparison: React.FC<HistoryComparisonProps> = ({
               </option>
             ))}
           </select>
-          <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+          <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-stone-500 dark:text-slate-400">
             <span>{formatModeName(runB)}</span>
             <span aria-hidden="true">·</span>
             <span>{runB.network.isp || 'Unknown ISP'}</span>
@@ -320,16 +320,16 @@ export const HistoryComparison: React.FC<HistoryComparisonProps> = ({
       </div>
 
       {/* Net Summary Note */}
-      <div className="border-b border-slate-200/80 dark:border-slate-800 bg-white/80 dark:bg-[#111827]/70 px-6 py-3.5 text-xs sm:px-8">
+      <div className="border-b border-[#EAE6DD] dark:border-[#1E2942] bg-white dark:bg-[#0D1322]/75 px-6 py-3.5 text-xs sm:px-8">
         {sameEntry ? (
           <span className="text-amber-700 dark:text-amber-400 font-medium">
             Run A and Run B are set to the same entry. Select two different entries to inspect performance changes.
           </span>
         ) : (
-          <div className="flex flex-wrap items-center justify-between gap-2 text-slate-600 dark:text-slate-300">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-stone-600 dark:text-slate-300">
             <span>
               From Run A to Run B:{' '}
-              <span className="font-semibold text-slate-900 dark:text-slate-100">
+              <span className="font-semibold text-stone-900 dark:text-slate-100">
                 Download {dlDiff >= 0 ? `+${dlDiff.toFixed(speedDecimals)}` : dlDiff.toFixed(speedDecimals)} {speedUnit} ({dlPct >= 0 ? `+${dlPct}%` : `${dlPct}%`})
               </span>
               <span aria-hidden="true"> · </span>
@@ -346,22 +346,22 @@ export const HistoryComparison: React.FC<HistoryComparisonProps> = ({
       </div>
 
       {/* Side-by-Side Throughput Visual Bars */}
-      <div className="grid grid-cols-1 gap-6 border-b border-slate-200/80 dark:border-slate-800 px-6 py-5 sm:grid-cols-2 sm:px-8">
+      <div className="grid grid-cols-1 gap-6 border-b border-[#EAE6DD] dark:border-[#1E2942] px-6 py-5 sm:grid-cols-2 sm:px-8">
         <div className="space-y-3">
-          <div className="text-xs font-medium text-slate-600 dark:text-slate-300">
+          <div className="text-xs font-medium text-stone-600 dark:text-slate-300">
             Download Comparison ({speedUnit})
           </div>
           <div className="space-y-2">
             <div>
-              <div className="flex justify-between text-[11px] text-slate-500 dark:text-slate-400">
+              <div className="flex justify-between text-[11px] text-stone-500 dark:text-slate-400">
                 <span>Run A</span>
-                <span className="font-mono font-semibold text-slate-800 dark:text-slate-100 tabular-nums">
+                <span className="font-mono font-semibold text-stone-800 dark:text-slate-100 tabular-nums">
                   {metrics[0].displayA} {speedUnit}
                 </span>
               </div>
-              <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+              <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-[#EAE6DD] dark:bg-[#1E2942]">
                 <motion.div
-                  className="h-full bg-slate-500 dark:bg-slate-400 origin-left"
+                  className="h-full bg-stone-500 dark:bg-slate-500 origin-left"
                   initial={{scaleX: 0}}
                   animate={{scaleX: Math.max(0.02, metrics[0].valA / maxDl)}}
                   transition={{type: 'spring', stiffness: 140, damping: 22}}
@@ -369,15 +369,15 @@ export const HistoryComparison: React.FC<HistoryComparisonProps> = ({
               </div>
             </div>
             <div>
-              <div className="flex justify-between text-[11px] text-slate-500 dark:text-slate-400">
+              <div className="flex justify-between text-[11px] text-stone-500 dark:text-slate-400">
                 <span>Run B</span>
-                <span className="font-mono font-semibold text-slate-900 dark:text-slate-50 tabular-nums">
+                <span className="font-mono font-semibold text-stone-900 dark:text-slate-50 tabular-nums">
                   {metrics[0].displayB} {speedUnit}
                 </span>
               </div>
-              <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+              <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-[#EAE6DD] dark:bg-[#1E2942]">
                 <motion.div
-                  className="h-full bg-blue-600 dark:bg-blue-500 origin-left"
+                  className="h-full bg-[#1D4ED8] dark:bg-[#38BDF8] origin-left"
                   initial={{scaleX: 0}}
                   animate={{scaleX: Math.max(0.02, metrics[0].valB / maxDl)}}
                   transition={{type: 'spring', stiffness: 140, damping: 22, delay: 0.05}}
@@ -388,20 +388,20 @@ export const HistoryComparison: React.FC<HistoryComparisonProps> = ({
         </div>
 
         <div className="space-y-3">
-          <div className="text-xs font-medium text-slate-600 dark:text-slate-300">
+          <div className="text-xs font-medium text-stone-600 dark:text-slate-300">
             Upload Comparison ({speedUnit})
           </div>
           <div className="space-y-2">
             <div>
-              <div className="flex justify-between text-[11px] text-slate-500 dark:text-slate-400">
+              <div className="flex justify-between text-[11px] text-stone-500 dark:text-slate-400">
                 <span>Run A</span>
-                <span className="font-mono font-semibold text-slate-800 dark:text-slate-100 tabular-nums">
+                <span className="font-mono font-semibold text-stone-800 dark:text-slate-100 tabular-nums">
                   {metrics[1].displayA} {speedUnit}
                 </span>
               </div>
-              <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+              <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-[#EAE6DD] dark:bg-[#1E2942]">
                 <motion.div
-                  className="h-full bg-slate-500 dark:bg-slate-400 origin-left"
+                  className="h-full bg-stone-500 dark:bg-slate-500 origin-left"
                   initial={{scaleX: 0}}
                   animate={{scaleX: Math.max(0.02, metrics[1].valA / maxUl)}}
                   transition={{type: 'spring', stiffness: 140, damping: 22}}
@@ -409,15 +409,15 @@ export const HistoryComparison: React.FC<HistoryComparisonProps> = ({
               </div>
             </div>
             <div>
-              <div className="flex justify-between text-[11px] text-slate-500 dark:text-slate-400">
+              <div className="flex justify-between text-[11px] text-stone-500 dark:text-slate-400">
                 <span>Run B</span>
-                <span className="font-mono font-semibold text-slate-900 dark:text-slate-50 tabular-nums">
+                <span className="font-mono font-semibold text-stone-900 dark:text-slate-50 tabular-nums">
                   {metrics[1].displayB} {speedUnit}
                 </span>
               </div>
-              <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+              <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-[#EAE6DD] dark:bg-[#1E2942]">
                 <motion.div
-                  className="h-full bg-cyan-600 dark:bg-cyan-400 origin-left"
+                  className="h-full bg-[#65A30D] dark:bg-[#A3E635] origin-left"
                   initial={{scaleX: 0}}
                   animate={{scaleX: Math.max(0.02, metrics[1].valB / maxUl)}}
                   transition={{type: 'spring', stiffness: 140, damping: 22, delay: 0.05}}
@@ -429,10 +429,10 @@ export const HistoryComparison: React.FC<HistoryComparisonProps> = ({
       </div>
 
       {/* Detailed Side-by-Side Metric Delta Table */}
-      <div className="overflow-x-auto bg-white dark:bg-[#111827]">
+      <div className="overflow-x-auto bg-white dark:bg-[#0D1322]">
         <table className="w-full text-left text-xs">
           <thead>
-            <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/60 text-slate-500 dark:text-slate-400">
+            <tr className="border-b border-[#EAE6DD] dark:border-[#1E2942] bg-[#F8F7F4] dark:bg-[#0A101D] text-stone-500 dark:text-slate-400">
               <th className="px-6 py-2.5 font-medium sm:px-8">Metric</th>
               <th className="px-4 py-2.5 text-right font-medium">Run A (Baseline)</th>
               <th className="px-4 py-2.5 text-right font-medium">Run B (Compared)</th>
@@ -440,7 +440,7 @@ export const HistoryComparison: React.FC<HistoryComparisonProps> = ({
               <th className="px-6 py-2.5 text-right font-medium sm:px-8">Status</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
+          <tbody className="divide-y divide-[#EAE6DD] dark:divide-[#1E2942]">
             {metrics.map((row) => {
               const delta = row.valB - row.valA;
               const epsilon = row.decimals === 0 ? 0.5 : 0.05;
@@ -459,20 +459,20 @@ export const HistoryComparison: React.FC<HistoryComparisonProps> = ({
                   : '';
 
               const statusColor = isUnchanged
-                ? 'text-slate-500 dark:text-slate-400'
+                ? 'text-stone-500 dark:text-slate-400'
                 : improved
                   ? 'text-emerald-700 dark:text-emerald-400'
                   : 'text-rose-700 dark:text-rose-400';
 
               return (
                 <tr key={row.key} className="h-11">
-                  <td className="px-6 py-2.5 font-medium text-slate-800 dark:text-slate-200 sm:px-8">
+                  <td className="px-6 py-2.5 font-medium text-stone-800 dark:text-slate-200 sm:px-8">
                     {row.label}
                   </td>
-                  <td className="px-4 py-2.5 text-right font-mono text-slate-600 dark:text-slate-400 tabular-nums whitespace-nowrap">
+                  <td className="px-4 py-2.5 text-right font-mono text-stone-600 dark:text-slate-400 tabular-nums whitespace-nowrap">
                     {row.displayA} {row.unit}
                   </td>
-                  <td className="px-4 py-2.5 text-right font-mono font-semibold text-slate-900 dark:text-slate-100 tabular-nums whitespace-nowrap">
+                  <td className="px-4 py-2.5 text-right font-mono font-semibold text-stone-900 dark:text-slate-100 tabular-nums whitespace-nowrap">
                     {row.displayB} {row.unit}
                   </td>
                   <td

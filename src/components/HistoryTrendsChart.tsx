@@ -35,8 +35,8 @@ export const HistoryTrendsChart: React.FC<HistoryTrendsChartProps> = ({
           ? '#34D399'
           : '#059669'
         : isDark
-          ? '#60A5FA'
-          : '#2563EB';
+          ? '#38BDF8'
+          : '#1D4ED8';
 
   const secondaryColor =
     metric === 'latency'
@@ -44,12 +44,12 @@ export const HistoryTrendsChart: React.FC<HistoryTrendsChartProps> = ({
         ? '#F87171'
         : '#DC2626'
       : isDark
-        ? '#22D3EE'
-        : '#0891B2';
+        ? '#A3E635'
+        : '#65A30D';
 
-  const gridStroke = isDark ? '#1E293B' : '#E2E8F0';
-  const crosshairStroke = isDark ? '#64748B' : '#94A3B8';
-  const dotStroke = isDark ? '#111827' : '#FFFFFF';
+  const gridStroke = isDark ? '#1E2942' : '#DFDAD0';
+  const crosshairStroke = isDark ? '#64748B' : '#A8A29E';
+  const dotStroke = isDark ? '#0D1322' : '#FFFFFF';
 
   const width = 680;
   const height = 216;
@@ -139,14 +139,14 @@ export const HistoryTrendsChart: React.FC<HistoryTrendsChartProps> = ({
       animate={{opacity: 1, y: 0}}
       transition={{duration: 0.25, ease: [0.16, 1, 0.3, 1]}}
       aria-label="Historical network performance trends"
-      className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] p-6 sm:p-7 transition-colors duration-200"
+      className="rounded-xl bg-white dark:bg-[#0D1322] p-6 sm:p-7 vx-card transition-colors duration-200"
     >
       <div className="flex flex-wrap items-center justify-between gap-4 mb-5">
         <div>
-          <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">
+          <h2 className="text-base font-semibold text-stone-900 dark:text-slate-50">
             Performance Trends
           </h2>
-          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+          <p className="mt-1 text-xs text-stone-500 dark:text-slate-400">
             {chronological.length >= 2
               ? `Tracking ${chronological.length} chronological runs · Net ${
                   metric === 'speed'
@@ -162,7 +162,7 @@ export const HistoryTrendsChart: React.FC<HistoryTrendsChartProps> = ({
         <div className="flex flex-wrap items-center gap-3">
           {/* Legend */}
           {chronological.length >= 2 && (
-            <div className="hidden sm:flex items-center gap-3 text-xs text-slate-600 dark:text-slate-300">
+            <div className="hidden sm:flex items-center gap-3 text-xs text-stone-600 dark:text-slate-300">
               <span className="inline-flex items-center gap-1.5">
                 <span
                   className="h-2 w-3 rounded-xs"
@@ -194,7 +194,7 @@ export const HistoryTrendsChart: React.FC<HistoryTrendsChartProps> = ({
           <div
             role="group"
             aria-label="Trend metric selector"
-            className="flex items-center gap-1 rounded-lg bg-slate-100 dark:bg-slate-800/90 p-1"
+            className="flex items-center gap-0.5 rounded-lg bg-[#EAE6DD]/75 dark:bg-[#131C31]/75 p-0.5 vx-pill-tray"
           >
             {(
               [
@@ -202,30 +202,40 @@ export const HistoryTrendsChart: React.FC<HistoryTrendsChartProps> = ({
                 {id: 'latency', label: 'Latency'},
                 {id: 'score', label: 'Score'},
               ] as const
-            ).map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => {
-                  setMetric(tab.id);
-                  setHoverIdx(null);
-                }}
-                aria-pressed={metric === tab.id}
-                className={`rounded-md px-3 py-1 text-xs font-medium whitespace-nowrap transition-colors cursor-pointer ${
-                  metric === tab.id
-                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-50 shadow-xs'
-                    : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100'
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
+            ).map((tab) => {
+              const active = metric === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => {
+                    setMetric(tab.id);
+                    setHoverIdx(null);
+                  }}
+                  aria-pressed={active}
+                  className={`relative rounded-md px-3 py-1 text-xs font-medium whitespace-nowrap transition-colors cursor-pointer ${
+                    active
+                      ? 'text-stone-900 dark:text-slate-50 font-semibold'
+                      : 'text-stone-500 dark:text-slate-400 hover:text-stone-900 dark:hover:text-slate-100'
+                  }`}
+                >
+                  {active && (
+                    <motion.span
+                      layoutId="trend-metric-pill"
+                      transition={{type: 'spring', stiffness: 460, damping: 34}}
+                      className="absolute inset-0 rounded-md vx-pill-active"
+                    />
+                  )}
+                  <span className="relative z-10">{tab.label}</span>
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
 
       {chronological.length < 2 ? (
-        <div className="flex h-[180px] items-center justify-center rounded-lg border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/50 px-4 text-center text-xs text-slate-500 dark:text-slate-400">
+        <div className="flex h-[180px] items-center justify-center rounded-lg border border-dashed border-[#DFDAD0] dark:border-[#1E2942] bg-[#F8F7F4] dark:bg-[#0A101D] px-4 text-center text-xs text-stone-500 dark:text-slate-400">
           Complete at least 2 speed tests to visualize download, upload, latency, and score trends over time.
         </div>
       ) : (
@@ -280,7 +290,7 @@ export const HistoryTrendsChart: React.FC<HistoryTrendsChartProps> = ({
                       y={y}
                       textAnchor="end"
                       dominantBaseline="middle"
-                      className="fill-slate-400 dark:fill-slate-500 text-[10px] font-mono tabular-nums"
+                      className="fill-stone-400 dark:fill-slate-500 text-[10px] font-mono tabular-nums"
                     >
                       {Math.round(tick)}
                     </text>
@@ -368,7 +378,7 @@ export const HistoryTrendsChart: React.FC<HistoryTrendsChartProps> = ({
                 x={pad.left}
                 y={height - 6}
                 textAnchor="start"
-                className="fill-slate-400 dark:fill-slate-500 text-[10px] font-mono tabular-nums"
+                className="fill-stone-400 dark:fill-slate-500 text-[10px] font-mono tabular-nums"
               >
                 {new Date(chronological[0].timestamp).toLocaleDateString(undefined, {
                   month: 'short',
@@ -379,7 +389,7 @@ export const HistoryTrendsChart: React.FC<HistoryTrendsChartProps> = ({
                 x={pad.left + plotW}
                 y={height - 6}
                 textAnchor="end"
-                className="fill-slate-400 dark:fill-slate-500 text-[10px] font-mono tabular-nums"
+                className="fill-stone-400 dark:fill-slate-500 text-[10px] font-mono tabular-nums"
               >
                 {new Date(
                   chronological[chronological.length - 1].timestamp,
@@ -397,7 +407,7 @@ export const HistoryTrendsChart: React.FC<HistoryTrendsChartProps> = ({
                   animate={{opacity: 1, y: 0}}
                   exit={{opacity: 0}}
                   transition={{duration: 0.14}}
-                  className="pointer-events-none absolute right-3 top-2 rounded-md border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/95 px-2.5 py-1.5 text-[11px] font-mono tabular-nums text-slate-700 dark:text-slate-200 shadow-xs"
+                  className="pointer-events-none absolute right-3 top-2 rounded-md bg-[#FFFDF9]/95 dark:bg-[#0D1322]/95 px-2.5 py-1.5 text-[11px] font-mono tabular-nums text-stone-700 dark:text-slate-200 vx-card-elevated"
                 >
                   <span>
                     {new Date(activePt.item.timestamp).toLocaleString(undefined, {
@@ -409,10 +419,10 @@ export const HistoryTrendsChart: React.FC<HistoryTrendsChartProps> = ({
                   </span>
                   {metric === 'speed' && (
                     <>
-                      <span className="ml-2.5 text-blue-600 dark:text-blue-400">
+                      <span className="ml-2.5 text-[#1D4ED8] dark:text-[#38BDF8]">
                         DL {formatSpeedValue(activePt.item.downloadMbps, speedUnit)} {speedUnit}
                       </span>
-                      <span className="ml-2.5 text-cyan-700 dark:text-cyan-400">
+                      <span className="ml-2.5 text-[#4D7C0F] dark:text-[#A3E635]">
                         UL {formatSpeedValue(activePt.item.uploadMbps, speedUnit)} {speedUnit}
                       </span>
                     </>

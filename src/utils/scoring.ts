@@ -26,6 +26,12 @@ export function formatSpeedValue(mbps: number, unit: SpeedUnit): string {
   return val.toFixed(1);
 }
 
+export function speedToNormalized(mbps: number, maxMbps = 1000): number {
+  if (mbps <= 0) return 0;
+  const clamped = Math.min(maxMbps, Math.max(0, mbps));
+  return Math.min(1, Math.log10(clamped + 1) / Math.log10(maxMbps + 1));
+}
+
 export function formatTransferSize(bytes: number): string {
   if (bytes >= GB) {
     const val = bytes / GB;

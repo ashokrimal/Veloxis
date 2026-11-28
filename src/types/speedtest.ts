@@ -27,6 +27,20 @@ export interface EdgeNode {
   rttMs: number | null;
   available: boolean;
   isPrimary?: boolean;
+  lat?: number;
+  lon?: number;
+  distanceKm?: number | null;
+}
+
+export interface CalibrationDeviceInfo {
+  deviceModel?: string;
+  platformVersion?: string;
+  cpuCores?: number;
+  memoryGb?: number;
+  effectiveType?: string;
+  downlinkMbps?: number;
+  saveData?: boolean;
+  recommendedStreams: number;
 }
 
 export interface DnsBenchmarkEntry {
@@ -34,6 +48,10 @@ export interface DnsBenchmarkEntry {
   name: string;
   ip: string;
   latencyMs: number | null;
+  minMs?: number | null;
+  maxMs?: number | null;
+  sampleCount?: number;
+  protocol?: 'DoH' | 'System DNS';
   status: 'Fast' | 'Average' | 'Slow' | 'Unavailable';
 }
 
@@ -96,6 +114,16 @@ export interface TelemetrySample {
   pingMs: number | null;
 }
 
+export interface TestLocationSummary {
+  lat: number;
+  lon: number;
+  city?: string;
+  region?: string;
+  country?: string;
+  countryCode?: string;
+  accuracyKm?: number;
+}
+
 export interface SpeedTestResult {
   id: string;
   timestamp: string;
@@ -104,12 +132,15 @@ export interface SpeedTestResult {
   uploadMbps: number;
   pingMs: number;
   loadedPingMs: number;
+  downloadLoadedPingMs?: number;
+  uploadLoadedPingMs?: number;
   jitterMs: number;
   packetLossPct: number;
   veloxisScore: number;
   bufferbloatGrade?: BufferbloatGrade;
   activities: ActivityVerdict[];
   network: NetworkInfo;
+  testLocation?: TestLocationSummary;
   samples: TelemetrySample[];
   durationSec?: number;
   transferredBytes?: {
@@ -144,3 +175,72 @@ export interface DetectedDevice {
   status: 'Active' | 'Testing' | 'Idle';
   lastSeenAt: number;
 }
+
+export type RouterMode =
+  | 'Primary Gateway'
+  | 'Router Mode (Double-NAT)'
+  | 'Access Point (AP) Mode'
+  | 'Bridge Mode'
+  | 'Mesh Node'
+  | 'Unknown';
+
+export type NetworkDeviceCategory =
+  | 'router'
+  | 'mobile'
+  | 'laptop'
+  | 'landline'
+  | 'tv'
+  | 'other';
+
+export interface NetworkRouterNode {
+  id: string;
+  role: 'primary' | 'secondary';
+  mode: RouterMode;
+  ip: string;
+  mac?: string;
+  vendor?: string;
+  hostname?: string;
+  hopIndex: number;
+  latencyMs?: number | null;
+  subnet?: string;
+}
+
+export interface NetworkTopologyDevice {
+  id: string;
+  category: NetworkDeviceCategory;
+  label: string;
+  ip?: string;
+  mac?: string;
+  vendor?: string;
+  routerRole?: 'primary' | 'secondary' | 'unknown';
+  source: 'lan-probe' | 'veloxis-session';
+  isCurrentDevice?: boolean;
+  rttMs?: number | null;
+  lastSeenAt: number;
+}
+
+export interface NetworkTopologyReport {
+  token: string;
+  publicIp: string;
+  isp: string;
+  asn: string;
+  probeConnected: boolean;
+  lastScannedAt: number | null;
+  source: 'lan-probe' | 'veloxis-sessions';
+  routers: NetworkRouterNode[];
+  devices: NetworkTopologyDevice[];
+  categoryCounts: Record<NetworkDeviceCategory, number> & {total: number};
+  notes?: string;
+}
+
+export interface WebRtcProbeResult {
+  supported: boolean;
+  probedAt: number;
+  localIps: string[];
+  reflexiveIps: string[];
+  mdnsCandidates: number;
+  candidateTypes: string[];
+  natMismatch: boolean;
+  subnetHint: string | null;
+}
+

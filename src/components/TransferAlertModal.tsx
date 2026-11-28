@@ -1,12 +1,12 @@
 import React, {useState} from 'react';
 import {AlertTriangle, X} from 'lucide-react';
-import {AnimatePresence, motion} from 'motion/react';
 import type {BenchmarkProfile, SpeedUnit} from '../types/speedtest';
 import {
   computeSubscriptionTransferBytes,
   convertSpeed,
   formatTransferSize,
 } from '../utils/scoring';
+import {BottomSheetModal} from './BottomSheetModal';
 
 interface TransferAlertModalProps {
   isOpen: boolean;
@@ -50,7 +50,6 @@ export const TransferAlertModal: React.FC<TransferAlertModalProps> = ({
 }) => {
   const [customDlBytes, setCustomDlBytes] = useState<number | null>(null);
   const [customUlBytes, setCustomUlBytes] = useState<number | null>(null);
-
 
   const dlPlanVal =
     profile.subscribedDownloadMbps !== null
@@ -103,28 +102,16 @@ export const TransferAlertModal: React.FC<TransferAlertModalProps> = ({
       : 'Both ways';
 
   return (
-    <AnimatePresence>
-      {isOpen && (
-        <motion.div
-          key="transfer-alert-backdrop"
-          initial={{opacity: 0}}
-          animate={{opacity: 1}}
-          exit={{opacity: 0}}
-          transition={{duration: 0.18, ease: 'easeOut'}}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 dark:bg-black/70 p-4 backdrop-blur-xs"
-          role="alertdialog"
-          aria-modal="true"
-          aria-labelledby="transfer-alert-title"
-          aria-describedby="transfer-alert-desc"
-        >
-          <motion.div
-            initial={{opacity: 0, scale: 0.96, y: 10}}
-            animate={{opacity: 1, scale: 1, y: 0}}
-            exit={{opacity: 0, scale: 0.97, y: 6}}
-            transition={{type: 'spring', stiffness: 380, damping: 30}}
-            className="w-full max-w-lg overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] shadow-xl"
-          >
-        <div className="flex items-start justify-between gap-4 border-b border-slate-200 dark:border-slate-800 px-6 py-4">
+    <BottomSheetModal
+      isOpen={isOpen}
+      onClose={onClose}
+      role="alertdialog"
+      ariaLabelledBy="transfer-alert-title"
+      ariaDescribedBy="transfer-alert-desc"
+      maxWidthClass="max-w-lg"
+    >
+      <div>
+        <div className="flex items-start justify-between gap-4 border-b border-[#EAE6DD] dark:border-[#1E2942] px-6 pt-2 pb-4">
           <div className="flex items-center gap-2.5">
             <AlertTriangle
               className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0"
@@ -132,7 +119,7 @@ export const TransferAlertModal: React.FC<TransferAlertModalProps> = ({
             />
             <h2
               id="transfer-alert-title"
-              className="text-base font-semibold text-slate-900 dark:text-slate-50"
+              className="text-base font-semibold text-stone-900 dark:text-slate-50"
             >
               Confirm Subscription File Transfer Test
             </h2>
@@ -141,7 +128,7 @@ export const TransferAlertModal: React.FC<TransferAlertModalProps> = ({
             type="button"
             onClick={onClose}
             aria-label="Close alert"
-            className="rounded-md p-1 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 cursor-pointer"
+            className="rounded-md p-1 text-stone-400 hover:bg-[#EAE6DD] dark:hover:bg-[#131C31] hover:text-stone-800 dark:hover:text-slate-100 cursor-pointer"
           >
             <X className="h-4 w-4" aria-hidden="true" />
           </button>
@@ -150,26 +137,25 @@ export const TransferAlertModal: React.FC<TransferAlertModalProps> = ({
         <div className="space-y-4 px-6 py-5 text-xs">
           <p
             id="transfer-alert-desc"
-            className="leading-relaxed text-slate-600 dark:text-slate-300"
+            className="leading-relaxed text-stone-600 dark:text-slate-300"
           >
             This test measures your real-world sustained throughput by transferring actual file payloads sized to your ISP plan. It will{' '}
-            <span className="font-semibold text-slate-900 dark:text-slate-100">
+            <span className="font-semibold text-stone-900 dark:text-slate-100">
               download {formatTransferSize(effectiveDlBytes)}
             </span>{' '}
             and{' '}
-            <span className="font-semibold text-slate-900 dark:text-slate-100">
+            <span className="font-semibold text-stone-900 dark:text-slate-100">
               upload {formatTransferSize(effectiveUlBytes)}
             </span>{' '}
             ({formatTransferSize(totalBytes)} total data). Avoid running this on metered or limited mobile data plans.
           </p>
 
-          {/* Subscription Plan Picker if not set or to adjust quickly */}
-          <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/60 p-3.5 space-y-2.5">
+          <div className="rounded-lg border border-[#DFDAD0] dark:border-[#1E2942] bg-[#F8F7F4] dark:bg-[#131C31]/70 p-3.5 space-y-2.5">
             <div className="flex items-center justify-between">
-              <span className="font-medium text-slate-700 dark:text-slate-200">
+              <span className="font-medium text-stone-700 dark:text-slate-200">
                 ISP Plan Tier ({speedUnit})
               </span>
-              <span className="font-mono text-slate-500 dark:text-slate-400 tabular-nums">
+              <span className="font-mono text-stone-500 dark:text-slate-400 tabular-nums">
                 {profile.subscribedDownloadMbps !== null
                   ? `${Number(convertSpeed(profile.subscribedDownloadMbps, speedUnit).toFixed(1))} ${speedUnit}`
                   : 'Not set (defaulting to 500 MB)'}
@@ -196,10 +182,10 @@ export const TransferAlertModal: React.FC<TransferAlertModalProps> = ({
                         subscribedDownloadMbps: tierMbps,
                       });
                     }}
-                    className={`rounded-md border px-2.5 py-1 font-mono text-[11px] font-medium transition-colors cursor-pointer ${
+                    className={`rounded-md px-2.5 py-1 font-mono text-[11px] font-medium transition-colors cursor-pointer ${
                       active
-                        ? 'border-blue-600 dark:border-blue-500 bg-blue-600 dark:bg-blue-500 text-white'
-                        : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700'
+                        ? 'vx-pill-active text-[#1D4ED8] dark:text-[#38BDF8] font-semibold'
+                        : 'bg-white dark:bg-[#0D1322] text-stone-600 dark:text-slate-300 hover:bg-[#EAE6DD] dark:hover:bg-[#1E2942] vx-btn-secondary'
                     }`}
                   >
                     {tierLabel}
@@ -209,45 +195,44 @@ export const TransferAlertModal: React.FC<TransferAlertModalProps> = ({
             </div>
           </div>
 
-          {/* Transfer Size Breakdown & Preset Override */}
-          <div className="grid grid-cols-3 gap-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/40 p-3.5">
+          <div className="grid grid-cols-3 gap-3 rounded-lg border border-[#DFDAD0] dark:border-[#1E2942] bg-[#F8F7F4] dark:bg-[#131C31]/60 p-3.5">
             <div>
-              <div className="text-[11px] text-slate-500 dark:text-slate-400">
+              <div className="text-[11px] text-stone-500 dark:text-slate-400">
                 Download Size
               </div>
-              <div className="mt-1 font-mono text-sm font-bold text-slate-900 dark:text-slate-50 tabular-nums">
+              <div className="mt-1 font-mono text-sm font-bold text-stone-900 dark:text-slate-50 tabular-nums">
                 {formatTransferSize(effectiveDlBytes)}
               </div>
-              <div className="mt-0.5 font-mono text-[11px] text-slate-400 dark:text-slate-500">
+              <div className="mt-0.5 font-mono text-[11px] text-stone-400 dark:text-slate-500">
                 {dlEst}
               </div>
             </div>
             <div>
-              <div className="text-[11px] text-slate-500 dark:text-slate-400">
+              <div className="text-[11px] text-stone-500 dark:text-slate-400">
                 Upload Size
               </div>
-              <div className="mt-1 font-mono text-sm font-bold text-slate-900 dark:text-slate-50 tabular-nums">
+              <div className="mt-1 font-mono text-sm font-bold text-stone-900 dark:text-slate-50 tabular-nums">
                 {formatTransferSize(effectiveUlBytes)}
               </div>
-              <div className="mt-0.5 font-mono text-[11px] text-slate-400 dark:text-slate-500">
+              <div className="mt-0.5 font-mono text-[11px] text-stone-400 dark:text-slate-500">
                 {ulEst}
               </div>
             </div>
             <div>
-              <div className="text-[11px] text-slate-500 dark:text-slate-400">
+              <div className="text-[11px] text-stone-500 dark:text-slate-400">
                 Total Data Used
               </div>
               <div className="mt-1 font-mono text-sm font-bold text-amber-700 dark:text-amber-400 tabular-nums">
                 {formatTransferSize(totalBytes)}
               </div>
-              <div className="mt-0.5 font-mono text-[11px] text-slate-400 dark:text-slate-500">
+              <div className="mt-0.5 font-mono text-[11px] text-stone-400 dark:text-slate-500">
                 {totalEstLabel}
               </div>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+            <span className="text-[11px] font-medium text-stone-500 dark:text-slate-400">
               Override file size per direction:
             </span>
             <div className="flex flex-wrap gap-1.5">
@@ -261,10 +246,10 @@ export const TransferAlertModal: React.FC<TransferAlertModalProps> = ({
                       setCustomDlBytes(preset.bytes);
                       setCustomUlBytes(preset.bytes);
                     }}
-                    className={`rounded-md border px-2 py-1 font-mono text-[11px] font-medium transition-colors cursor-pointer ${
+                    className={`rounded-md px-2 py-1 font-mono text-[11px] font-medium transition-colors cursor-pointer ${
                       selected
-                        ? 'border-slate-900 dark:border-slate-200 bg-slate-900 dark:bg-slate-200 text-white dark:text-slate-900'
-                        : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'
+                        ? 'vx-pill-active text-stone-900 dark:text-slate-50 font-semibold'
+                        : 'bg-white dark:bg-[#0D1322] text-stone-600 dark:text-slate-300 hover:bg-[#EAE6DD] dark:hover:bg-[#1E2942] vx-btn-secondary'
                     }`}
                   >
                     {preset.label}
@@ -275,14 +260,14 @@ export const TransferAlertModal: React.FC<TransferAlertModalProps> = ({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/50 px-6 py-3.5">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#EAE6DD] dark:border-[#1E2942] bg-[#F8F7F4] dark:bg-[#131C31]/70 px-6 py-4">
           <button
             type="button"
             onClick={() => {
               onClose();
               onSwitchToQuickTest();
             }}
-            className="text-xs font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 underline underline-offset-4 cursor-pointer"
+            className="text-xs font-medium text-stone-600 dark:text-slate-300 hover:text-stone-900 dark:hover:text-slate-100 underline underline-offset-4 cursor-pointer"
           >
             Use Quick Test (~11s) instead
           </button>
@@ -291,7 +276,7 @@ export const TransferAlertModal: React.FC<TransferAlertModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer"
+              className="rounded-lg bg-white dark:bg-[#0D1322] px-4 py-2 text-xs font-semibold text-stone-700 dark:text-slate-200 hover:bg-[#EAE6DD] dark:hover:bg-[#1E2942] vx-btn-secondary cursor-pointer"
             >
               Cancel
             </button>
@@ -301,15 +286,13 @@ export const TransferAlertModal: React.FC<TransferAlertModalProps> = ({
                 onClose();
                 onConfirmFileTest(effectiveDlBytes, effectiveUlBytes);
               }}
-              className="rounded-lg bg-blue-600 dark:bg-blue-500 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-700 dark:hover:bg-blue-400 cursor-pointer"
+              className="rounded-lg bg-[#1D4ED8] hover:bg-[#1E40AF] dark:bg-[#0EA5E9] dark:hover:bg-[#38BDF8] px-4 py-2 text-xs font-semibold text-white dark:text-slate-950 vx-btn-primary cursor-pointer"
             >
               Start ({formatTransferSize(totalBytes)})
             </button>
           </div>
         </div>
-          </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>
+      </div>
+    </BottomSheetModal>
   );
 };

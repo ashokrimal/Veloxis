@@ -1,14 +1,28 @@
-import {useEffect, useState} from 'react';
+import {useCallback, useEffect, useState} from 'react';
 
 export type SystemTheme = 'light' | 'dark';
+export type ThemePreference = 'system' | 'light' | 'dark';
 
 const MEDIA_QUERY = '(prefers-color-scheme: dark)';
+const THEME_STORAGE_KEY = 'veloxis_theme_pref_v1';
 
-function getPreferredTheme(): SystemTheme {
+function getOsTheme(): SystemTheme {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
     return 'light';
   }
   return window.matchMedia(MEDIA_QUERY).matches ? 'dark' : 'light';
+}
+
+function loadThemePreference(): ThemePreference {
+  try {
+    const raw = localStorage.getItem(THEME_STORAGE_KEY);
+    if (raw === 'light' || raw === 'dark' || raw === 'system') {
+      return raw;
+    }
+    return 'system';
+  } catch {
+    return 'system';
+  }
 }
 
 function applyThemeToDocument(theme: SystemTheme) {
@@ -21,16 +35,33 @@ function applyThemeToDocument(theme: SystemTheme) {
 
   const themeColorMeta = document.querySelector('meta[name="theme-color"]');
   if (themeColorMeta) {
-    themeColorMeta.setAttribute('content', isDark ? '#0B1120' : '#FFFFFF');
+    themeColorMeta.setAttribute('content', isDark ? '#060913' : '#F3F1EC');
   }
 }
 
-export function useSystemTheme(): {theme: SystemTheme; isDark: boolean} {
-  const [theme, setTheme] = useState<SystemTheme>(() => getPreferredTheme());
+export function useSystemTheme(): {
+  theme: SystemTheme;
+  isDark: boolean;
+  preference: ThemePreference;
+  setPreference: (next: ThemePreference) => void;
+  toggleTheme: () => void;
+} {
+  const [preference, setPreferenceState] = useState<ThemePreference>(loadThemePreference);
+  const [osTheme, setOsTheme] = useState<SystemTheme>(getOsTheme);
+
+  const resolvedTheme: SystemTheme = preference === 'system' ? osTheme : preference;
 
   useEffect(() => {
-    applyThemeToDocument(theme);
-  }, [theme]);
+    applyThemeToDocument(resolvedTheme);
+  }, [resolvedTheme]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, preference);
+    } catch {
+      // Ignore storage errors
+    }
+  }, [preference]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
@@ -39,25 +70,36 @@ export function useSystemTheme(): {theme: SystemTheme; isDark: boolean} {
 
     const mediaQuery = window.matchMedia(MEDIA_QUERY);
     const handleChange = (event: MediaQueryListEvent) => {
-      const nextTheme: SystemTheme = event.matches ? 'dark' : 'light';
-      setTheme(nextTheme);
-      applyThemeToDocument(nextTheme);
+      setOsTheme(event.matches ? 'dark' : 'light');
     };
 
-    // Sync once on mount in case OS preference changed before effect ran
-    const current: SystemTheme = mediaQuery.matches ? 'dark' : 'light';
-    setTheme(current);
-    applyThemeToDocument(current);
+    setOsTheme(mediaQuery.matches ? 'dark' : 'light');
 
     if (typeof mediaQuery.addEventListener === 'function') {
       mediaQuery.addEventListener('change', handleChange);
       return () => mediaQuery.removeEventListener('change', handleChange);
     }
 
-    // Legacy Safari fallback
     mediaQuery.addListener(handleChange);
     return () => mediaQuery.removeListener(handleChange);
   }, []);
 
-  return {theme, isDark: theme === 'dark'};
+  const setPreference = useCallback((next: ThemePreference) => {
+    setPreferenceState(next);
+  }, []);
+
+  const toggleTheme = useCallback(() => {
+    setPreferenceState((prev) => {
+      const effective = prev === 'system' ? getOsTheme() : prev;
+      return effective === 'dark' ? 'light' : 'dark';
+    });
+  }, []);
+
+  return {
+    theme: resolvedTheme,
+    isDark: resolvedTheme === 'dark',
+    preference,
+    setPreference,
+    toggleTheme,
+  };
 }

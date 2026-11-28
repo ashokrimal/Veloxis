@@ -191,6 +191,28 @@ export function useTelemetryAudio() {
     });
   }, [scheduleTone]);
 
+  const playClick = useCallback(() => {
+    scheduleTone({
+      freq: 640,
+      endFreq: 520,
+      duration: 0.04,
+      gain: 0.08,
+      type: 'sine',
+    });
+  }, [scheduleTone]);
+
+  const playSuccess = useCallback(() => {
+    unlockAudio();
+    scheduleTone({freq: 587.33, duration: 0.1, gain: 0.16, type: 'sine'});
+    scheduleTone({
+      freq: 880,
+      delay: 0.055,
+      duration: 0.16,
+      gain: 0.15,
+      type: 'sine',
+    });
+  }, [scheduleTone, unlockAudio]);
+
   const toggleMute = useCallback(() => {
     setIsMuted((prev) => {
       const next = !prev;
@@ -215,5 +237,7 @@ export function useTelemetryAudio() {
     playProgressTick,
     playComplete,
     playCancel,
+    playClick,
+    playSuccess,
   };
 }
